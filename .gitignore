@@ -1,0 +1,10 @@
+.venv/
+dist/
+.ruff_cache/
+__pycache__/
+*.pyc
+.env
+runs/
+.work/
+!configs/
+

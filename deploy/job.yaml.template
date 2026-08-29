@@ -1,0 +1,32 @@
+apiVersion: run.googleapis.com/v1
+kind: Job
+metadata:
+  name: urithiru
+spec:
+  template:
+    spec:
+      taskCount: 1
+      parallelism: 1
+      template:
+        spec:
+          serviceAccountName: ${SERVICE_ACCOUNT}
+          maxRetries: 0
+          timeoutSeconds: 86400
+          # Generated code runs in a Cloud Run sandbox launched from inside this container.
+          sandboxLauncher: gvisor
+          containers:
+            - image: ${IMAGE_URI}
+              # Every execution overrides these; the defaults must never do useful work.
+              args: ["orchestrate", "--run", "OVERRIDDEN-AT-SUBMIT"]
+              env:
+                - name: GEMINI_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      key: latest
+                      name: urithiru-gemini-api-key
+              resources:
+                limits:
+                  # The orchestrator now hosts every parallel agent, not just the search loop.
+                  cpu: "4"
+                  memory: 8Gi
+

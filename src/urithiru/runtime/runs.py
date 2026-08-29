@@ -14,10 +14,9 @@ from urithiru.core.engine import UrithiruEngine
 from urithiru.core.models import Dataset
 from urithiru.core.report import export
 from urithiru.runtime import events
-from urithiru.runtime.checkpoints import read_json, write_json
 from urithiru.runtime.config import Config, GoogleConfig
 from urithiru.runtime.control import cancellation, run_lock
-from urithiru.runtime.files import DatasetFiles
+from urithiru.runtime.files import DatasetFiles, read_json, write_json
 from urithiru.runtime.sandbox import CloudSandbox, DockerSandbox
 
 
@@ -62,7 +61,7 @@ class LocalRun:
         if not self.directory.is_dir():
             raise FileNotFoundError(f"No run directory at {self.directory}")
         self.reference = str(self.directory)
-        events.bind(self.reference)
+        events.bind(self.reference, self.directory)
 
     def status(self) -> dict:
         return read_status(self.directory, self.reference)
@@ -134,6 +133,7 @@ class CloudRun:
         with self.open() as (cloud, directory, _config):
             cloud.download_inputs(directory)
             cloud.load_checkpoint(directory)
+            events.bind(self.reference, directory)
             evaluate(directory, cloud)
             return read_status(directory, self.reference)
 
@@ -173,7 +173,7 @@ def start(
             return {"run": reference, "execution": submit(cloud, config, steps)}
         finally:
             cloud.close()
-    events.bind(str(directory))
+    events.bind(str(directory), directory)
     print(f"run={directory}", flush=True)
     evaluate(directory, None)
     return read_status(directory, str(directory))

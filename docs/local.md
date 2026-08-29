@@ -18,6 +18,9 @@ you intend to pass Parquet files. This package's own `Dockerfile` builds the
 separate Google SDK worker; it does not redistribute the agent CLI or your
 credentials.
 
+A step runs its search and code containers at the same time, so budget for
+`2 x search.parallelism` containers at 4 GiB and 3 CPUs each.
+
 Authenticate interactively if needed:
 
 ```sh
@@ -45,10 +48,10 @@ Export `PROJECT_ID` and `VERTEX_API_KEY` in the calling shell. These cover the
 host's prior, embedding and deduplication calls through the Google GenAI SDK in
 Vertex express mode. Credentials are never written into run configuration.
 
-Extra agent credentials are opt-in through `agent_env` in `configs/docker.toml`,
-e.g. `["S2_API_KEY", "OPENALEX_API_KEY"]`. Export each declared value yourself;
-a missing or empty value fails the run. Declared values are redacted from generated
-artifacts after each container exits. Do not copy a research `.env` into a sandbox.
+No other credential reaches a sandbox. Agent containers get the login volume and one
+workspace, and the literature and external agents use public unauthenticated endpoints
+for their searches. Do not copy a research `.env` into a sandbox; stray `.env` files and
+symlinks are deleted from a workspace after each container exits.
 
 ## Run
 
@@ -68,10 +71,11 @@ Metadata is optional UTF-8 text, passed intact without benchmark parsing. The
 runtime comes from the profile — there is no `--runtime` flag.
 
 The CLI prints `run=<directory>` and then one JSON event per line: `stage_started`,
-`container_started`, `proposals_ready`, `hypothesis_selected`,
-`hypothesis_evaluated`, `run_finished`. Pipe through `jq -r .message` for a plain
-progress log. Model calls and the agent CLI use their configured account quota;
-this command is not an offline check.
+`agent_started`, `proposals_ready`, `hypothesis_selected`, `hypothesis_evaluated`,
+`run_finished`. Pipe through `jq -r .message` for a plain progress log. The same lines
+are appended to `<run>/events.jsonl`, which is what to read to follow a run you did not
+start from this terminal. Model calls and the agent CLI use their configured account
+quota; this command is not an offline check.
 
 ```sh
 uv run urithiru status /absolute/path/runs/RUN_ID
@@ -83,12 +87,12 @@ uv run urithiru export /absolute/path/runs/RUN_ID --output /absolute/path/new-ex
 ## Steps and time
 
 `--steps` is how many hypotheses to evaluate. The profile's `[budget]` section states
-every wall-clock and size limit explicitly — stage minutes, grace, the agent's
-tool-turn cap, the generated-script timeout, the model output cap, download caps in
-MiB and the retry count. There are no timeout constants anywhere else in the code.
+every wall-clock and size limit explicitly — one `<stage>_minutes` per stage, the grace
+period, the model output cap, the input-bundle limit in MiB and the retry count. There
+are no timeout constants anywhere else in the code.
 
-`--proposal-minutes`, `--verification-minutes` and `--external-minutes` override the
-corresponding profile value for a single run:
+`--proposal-minutes`, `--search-minutes`, `--code-minutes` and `--external-minutes`
+override the corresponding profile value for a single run:
 
 ```sh
 uv run urithiru run --data /absolute/path/data.csv --steps 5 --external-minutes 25
@@ -101,7 +105,9 @@ limits the run started under.
 
 Resume loads the original run configuration and checkpoint. Start a new run to
 change data, models, budget or scientific settings. A failed workspace is retained
-as `<goal>_previous_<hex>`; a valid completed result is reused. A transient stage
+as `<goal>_previous_<hex>`; a valid completed result is reused. Each stage gets its own
+workspace under `sandbox_artifacts/`, so `search_node_000001/` holds no data files at
+all while `code_node_000001/` holds a copy of your inputs. A transient stage
 failure retries up to the budget's attempt limit before the run fails, and siblings
 that already succeeded are committed to the checkpoint first.
 

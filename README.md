@@ -11,22 +11,24 @@ statistical confidence**.
 
 ## How it works
 
-A run is a Monte Carlo tree search over hypotheses. Each **step** takes one
-hypothesis through three stages:
+A run is a Monte Carlo tree search over hypotheses. Each **step** spends four agent
+containers on one claim:
 
-1. **Proposal** — an agent performs exploratory analysis on your files and proposes
-   candidate claims. Duplicates are removed and the most novel candidate is selected.
-2. **Verification** — a second agent forms a literature-only prior, freezes it, then
-   writes and runs code against your data to test the claim.
-3. **External** — when the belief moved enough to be surprising, a third agent looks
-   for independent data elsewhere and tests the claim again.
+1. **Proposal** — an agent explores your files and proposes candidate claims.
+   Duplicates are removed and the most novel candidate is selected.
+2. **Search** and **Code**, at the same time, in two separate containers. The search
+   agent judges the claim from published literature; its workspace never receives your
+   data. The code agent writes and runs an analysis against your data; it is never told
+   what the literature concluded.
+3. **External** — when those two answers disagree enough to be surprising, a fourth
+   agent goes looking for independent data elsewhere and tests the claim again.
 
 The result updates the tree, and the next step explores from there. `--steps` is how
 many hypotheses you want evaluated.
 
-Every evaluation follows the same order: a data-blind literature assessment is
-frozen to `p_search.json` **before** the agent may open the dataset, then the
-empirical test runs. That ordering is what makes the belief change meaningful.
+The distance between the search and code beliefs is the whole point, so the two are
+produced by agents that cannot see each other's work. Data-blindness is not a rule the
+literature agent is asked to follow — the files are simply absent from its container.
 
 Full detail: [docs/design.md](docs/design.md), [docs/architecture.md](docs/architecture.md).
 
@@ -44,8 +46,9 @@ uv run urithiru --help
 
 The cloud runtime uses the **Antigravity CLI** for the agents, the **Google GenAI
 SDK** for priors, deduplication and embeddings, one **Cloud Run Job** for the search
-loop, a **Cloud Run sandbox** to isolate generated code, and **Cloud Storage** for
-inputs, checkpoints and artifacts.
+loop, a **Cloud Run sandbox** per agent to isolate generated code, and **Cloud
+Storage** for inputs, checkpoints and artifacts. There is no second state store: the
+checkpoint and the event log in the bucket are what a run is.
 
 1. Copy `configs/google.toml` and replace `project` and `bucket` with your own.
    Placeholder values are rejected at load time.
@@ -91,7 +94,8 @@ sets how long each stage may take, in minutes:
 ```toml
 [budget]
 proposal_minutes = 5
-verification_minutes = 10
+search_minutes = 8      # these two run at the same time,
+code_minutes = 10       # so a step costs the larger of them, not the sum
 external_minutes = 10
 grace_minutes = 4
 ```
@@ -102,12 +106,11 @@ Override any of them for one run without editing the profile:
 uv run urithiru run --data ./data.csv --steps 5 --external-minutes 25
 ```
 
-A step costs at most `proposal + verification + external` minutes, and steps run
+A step costs at most `proposal + max(search, code) + external` minutes, and steps run
 `parallelism` at a time (2 by default), so 5 steps with the values above is roughly
-40-75 minutes of wall clock. Not every step reaches the external stage: it runs only
-when the seed result was surprising. The same `[budget]` section also holds the
-agent's turn cap, generated-script timeout, model output cap, download caps and the
-retry count.
+35-65 minutes of wall clock. Not every step reaches the external stage: it runs only
+when the two beliefs disagreed enough. Because search and code run together, a step
+holds up to two sandboxes at once, and a run holds up to `2 x parallelism`.
 
 ## Output
 
@@ -116,10 +119,11 @@ A run directory (local or in the bucket) holds:
 ```text
 run_config.json         resolved settings, input hashes and metadata
 mcts_state.json         authoritative tree, RNG, pending/completed IDs and status
+events.jsonl            every event in order; read this to follow a run in progress
 candidate_audits.json   raw proposals, duplicate decisions and selection evidence
 inputs/                 your original files, unmodified
 evaluations/            one immutable JSON per completed hypothesis
-sandbox_artifacts/      the agent's code, execution logs and retained sources
+sandbox_artifacts/      each agent's code, execution logs and retained sources
 ```
 
 `urithiru export` copies all of that to a new directory and adds `report.json` and
@@ -144,7 +148,8 @@ signature is its argument list and defaults.
 ## Reliability
 
 Runs are checkpointed after every state change and resume from where they stopped;
-completed evaluations are reused rather than recomputed. A transient agent or API
+completed evaluations, embeddings and duplicate decisions are reused rather than
+recomputed. A transient agent or API
 failure retries up to the profile's `stage_attempts`. Cancellation is cooperative and
 preserves the checkpoint. Deterministic behaviour is verified offline against saved
 artifacts: [docs/offline-verification.md](docs/offline-verification.md).

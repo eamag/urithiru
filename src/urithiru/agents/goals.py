@@ -1,15 +1,13 @@
-"""The original proposal, verification and external goals, independent of their sandbox."""
+"""What each agent is asked to do, and how its answer is read back. No sandbox knowledge."""
 
 import json
 from pathlib import Path
 
 from urithiru.agents.llm import prompt
-from urithiru.core.models import AgentExecutionResult, ExternalVerificationResult, Goal
-from urithiru.runtime.checkpoints import read_json
+from urithiru.core.models import Experiment, External, Goal, Literature
 from urithiru.runtime.control import Cancelled
 from urithiru.runtime.events import emit
-
-SEARCH_FIELDS = ("search_category_counts", "search_rationale", "literature_findings")
+from urithiru.runtime.files import read_json
 
 
 def read_proposals(workspace: Path) -> dict:
@@ -20,38 +18,29 @@ def read_proposals(workspace: Path) -> dict:
     }
 
 
-def check_phase_order(workspace: Path) -> None:
-    """The agent enforces Phase A by prompt; the harness checks the artifacts afterwards.
-
-    `p_search.json` is the data-blind literature assessment. It must exist, and it must
-    have been written before any script that could have touched the seed data.
-    """
-    frozen = workspace / "p_search.json"
-    if not frozen.exists():
-        raise RuntimeError("No p_search.json: the data-blind literature assessment was never frozen")
-    scripts = [path.stat().st_mtime for path in workspace.rglob("*.py")]
-    if scripts and min(scripts) < frozen.stat().st_mtime:
-        raise RuntimeError("Analysis code predates p_search.json: Phase A was not data-blind")
+def read_literature(workspace: Path) -> Literature:
+    return Literature(**read_json(workspace / "p_search.json"))
 
 
-def read_verification(workspace: Path) -> AgentExecutionResult:
-    check_phase_order(workspace)
+def read_experiment(workspace: Path) -> Experiment:
     data = read_json(workspace / "result.json")
-    search = read_json(workspace / "p_search.json")
-    data.update({key: search[key] for key in SEARCH_FIELDS})
-    result = AgentExecutionResult(**data)
-    if result.error_code:
+    failure = data.pop("error_code", "")
+    if failure:
         # Infrastructure failure is never scientific evidence; the stage retries instead.
-        raise RuntimeError(f"Agent reported {result.error_code}: {result.summary}")
-    result.validate()
-    return result
+        raise RuntimeError(f"Agent reported {failure}: {data.get('summary', '')}")
+    return Experiment(**data)
 
 
-def read_external(workspace: Path) -> ExternalVerificationResult:
-    return ExternalVerificationResult(**read_json(workspace / "external_result.json"))
+def read_external(workspace: Path) -> External:
+    return External(**read_json(workspace / "external_result.json"))
 
 
-RESULT_READERS = {"proposal": read_proposals, "verification": read_verification, "external": read_external}
+RESULT_READERS = {
+    "proposal": read_proposals,
+    "search": read_literature,
+    "code": read_experiment,
+    "external": read_external,
+}
 
 
 class ResearchAgent:
@@ -111,25 +100,39 @@ class ResearchAgent:
             self.schema = result["schema_summary"]
         return result["hypotheses"]
 
-    def verify(self, node) -> AgentExecutionResult:
+    def literature(self, node) -> Literature:
+        """The data-blind belief. This sandbox is never given the dataset files."""
         return self.stage(
-            f"verification_{node.id}",
-            "verification",
+            f"search_{node.id}",
+            "search",
             {
-                "dataset": self.dataset_context,
                 "hypothesis": node.claim,
+                # Only the descriptive schema, so constructs can be named without seeing values.
+                "dataset": self.schema,
                 "evidence": "\n".join(node.evidence),
             },
         )
 
-    def external(self, node, verification) -> ExternalVerificationResult:
+    def experiment(self, node) -> Experiment:
+        """The empirical belief, formed by an agent that never learns what the literature said."""
+        return self.stage(
+            f"code_{node.id}",
+            "code",
+            {
+                "hypothesis": node.claim,
+                "dataset": self.dataset_context,
+                "evidence": "\n".join(node.evidence),
+            },
+        )
+
+    def external(self, node, literature: Literature, experiment: Experiment) -> External:
         return self.stage(
             f"external_{node.id}",
             "external",
             {
-                "dataset": self.dataset_context,
                 "hypothesis": node.claim,
-                "p_search": verification.search.prob_true,
-                "p_code": verification.code.prob_true,
+                "dataset": self.dataset_context,
+                "p_search": literature.belief.prob_true,
+                "p_code": experiment.belief.prob_true,
             },
         )

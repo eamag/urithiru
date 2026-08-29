@@ -5,16 +5,7 @@ import tomllib
 from dataclasses import dataclass, fields
 from pathlib import Path
 
-from urithiru.core.models import STAGES
-
-PLACEHOLDERS = (
-    "your-google-cloud-project-id",
-    "your-private-bucket",
-    "YOUR_PROJECT_ID",
-    "YOUR_PRIVATE_BUCKET",
-    "CHANGE_ME",
-    "",
-)
+PLACEHOLDERS = ("your-google-cloud-project-id", "your-private-bucket", "CHANGE_ME", "")
 MEGABYTE = 1024 * 1024
 EFFORTS = ("low", "medium", "high")
 JOB_SECONDS_LIMIT = 604800
@@ -22,10 +13,14 @@ JOB_SECONDS_LIMIT = 604800
 
 @dataclass(frozen=True)
 class Budget:
-    """Every wall-clock and size limit for a run, stated in minutes and MiB."""
+    """Every wall-clock and size limit for a run, stated in minutes and MiB.
+
+    One `<stage>_minutes` field per stage in `core.models.STAGES`; nothing else times out.
+    """
 
     proposal_minutes: int
-    verification_minutes: int
+    search_minutes: int
+    code_minutes: int
     external_minutes: int
     grace_minutes: int
     max_output_tokens: int
@@ -33,11 +28,7 @@ class Budget:
     stage_attempts: int
 
     def minutes(self, stage: str) -> int:
-        return {
-            "proposal": self.proposal_minutes,
-            "verification": self.verification_minutes,
-            "external": self.external_minutes,
-        }[stage]
+        return getattr(self, f"{stage}_minutes")
 
     def seconds(self, stage: str) -> int:
         return self.minutes(stage) * 60
@@ -51,8 +42,13 @@ class Budget:
         return self.input_mib * MEGABYTE
 
     def step_seconds(self) -> int:
-        """One MCTS step is a proposal, a verification and an external check, plus grace."""
-        return sum(self.seconds(stage) + self.grace_seconds for stage in STAGES)
+        """A step proposes, then runs search and code together, then checks independently."""
+        stages = [
+            self.seconds("proposal"),
+            max(self.seconds("search"), self.seconds("code")),
+            self.seconds("external"),
+        ]
+        return sum(stage + self.grace_seconds for stage in stages)
 
     def orchestrator_seconds(self, steps: int) -> int:
         return min(JOB_SECONDS_LIMIT, steps * self.step_seconds() * self.stage_attempts)
@@ -71,7 +67,6 @@ class SearchConfig:
     branching_factor: int
     top_k: int
     uct_c: float
-    surprisal_threshold: float
     external_minimum_surprise: float
     external_opportunity_weight: float
     external_cost_weight: float
@@ -91,7 +86,6 @@ class ModelConfig:
 class DockerConfig:
     image: str
     credential_volume: str
-    agent_env: list[str]
 
 
 @dataclass(frozen=True)
@@ -142,25 +136,25 @@ class Config:
             raise ValueError("Retrieved-context count must be between 1 and 200")
         if any(not math.isfinite(value) or value < 0 for value in vars(search).values()):
             raise ValueError("Search parameters must be finite and nonnegative")
-        if not 0 <= search.surprisal_threshold <= 1 or not 0 <= search.external_minimum_surprise <= 1:
-            raise ValueError("Surprise thresholds must be between zero and one")
+        if not 0 <= search.external_minimum_surprise <= 1:
+            raise ValueError("The external-verification threshold must be between zero and one")
         if not 0 <= self.models.temperature <= 2:
             raise ValueError("Model temperature must be between zero and two")
         if self.models.effort not in EFFORTS:
             raise ValueError(f"Model effort must be one of {', '.join(EFFORTS)}")
-        blank = [
-            field.name
-            for field in fields(self.models)
-            if isinstance(getattr(self.models, field.name), str)
-            and not getattr(self.models, field.name).strip()
-        ]
+        blank = self.blank_fields(self.models, ("",))
         if blank:
             raise ValueError(f"Model names must not be empty: {', '.join(blank)}")
-        unset = [
-            f"options.{field.name}"
-            for field in fields(self.options)
-            if isinstance(getattr(self.options, field.name), str)
-            and getattr(self.options, field.name).strip() in PLACEHOLDERS
-        ]
+        unset = self.blank_fields(self.options, PLACEHOLDERS)
         if unset:
             raise ValueError(f"Replace the placeholder configuration values: {', '.join(unset)}")
+
+    @staticmethod
+    def blank_fields(section, unusable: tuple[str, ...]) -> list[str]:
+        """String settings left empty, or still holding the profile's example value."""
+        return [
+            field.name
+            for field in fields(section)
+            if isinstance(getattr(section, field.name), str)
+            and getattr(section, field.name).strip() in unusable
+        ]

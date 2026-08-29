@@ -11,10 +11,10 @@ See [design.md](design.md), [architecture.md](architecture.md), [local.md](local
 
 One image, one bucket, one service account, one Cloud Run Job, one secret. The job
 runs the same discovery loop as the local runtime and launches the same agent CLI;
-the only difference is that generated code is isolated by a
+the only difference is that each agent is isolated by a
 [Cloud Run sandbox](https://docs.cloud.google.com/run/docs/code-execution) instead of
 a Docker container. There is no second worker job, no public endpoint, no Firestore
-and no Docker socket.
+and no Docker socket: the run's checkpoint and event log in the bucket are its state.
 
 ```sh
 gcloud auth login
@@ -58,11 +58,8 @@ permission to launch jobs:
 ```sh
 gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
   --member="serviceAccount:$SERVICE_ACCOUNT" --role=roles/storage.objectUser
-gcloud iam roles create urithiruModelCaller --project="$PROJECT_ID" \
-  --title="Urithiru model invocation" \
-  --permissions=aiplatform.endpoints.predict,serviceusage.services.use --stage=GA
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-  --member="serviceAccount:$SERVICE_ACCOUNT" --role="projects/$PROJECT_ID/roles/urithiruModelCaller"
+  --member="serviceAccount:$SERVICE_ACCOUNT" --role=roles/aiplatform.user
 ```
 
 ## Build
@@ -72,45 +69,59 @@ redistributes no agent binary and no credentials. Build with Cloud Build so an
 Apple Silicon image is never deployed to Cloud Run:
 
 ```sh
-export IMAGE_TAG="$REGION-docker.pkg.dev/$PROJECT_ID/urithiru/urithiru:v0.1.0"
-gcloud builds submit --tag "$IMAGE_TAG" .
+export IMAGE_URI="$REGION-docker.pkg.dev/$PROJECT_ID/urithiru/urithiru:v0.1.0"
+gcloud builds submit --tag "$IMAGE_URI" .
 ```
 
-Resolve the pushed digest and set `IMAGE_URI` to that immutable reference
-(`REGION-docker.pkg.dev/PROJECT/urithiru/urithiru@sha256:DIGEST`). Record it with the
-run's model and configuration provenance; a mutable tag makes a rerun unattributable
-to a known build.
+A production deployment should replace that tag with the pushed digest
+(`REGION-docker.pkg.dev/PROJECT/urithiru/urithiru@sha256:DIGEST`) and record it with
+the run's model and configuration provenance; a mutable tag makes a rerun
+unattributable to a known build.
 
 ## Deploy
 
-Rendering writes YAML only and never contacts Google Cloud:
+Substitution writes YAML only and never contacts Google Cloud:
 
 ```sh
-export SERVICE_ACCOUNT IMAGE_URI
-uv run python deploy/render.py --output /tmp/urithiru-deployment
-gcloud run jobs replace /tmp/urithiru-deployment/job.yaml --region="$REGION"
+sed -e "s|\${IMAGE_URI}|$IMAGE_URI|" -e "s|\${SERVICE_ACCOUNT}|$SERVICE_ACCOUNT|" \
+  deploy/job.yaml.template > /tmp/urithiru-job.yaml
+gcloud run jobs replace /tmp/urithiru-job.yaml --region="$REGION"
 ```
 
-The template sets `sandboxLauncher: gvisor`, one task, `maxRetries: 0`, four CPUs and
-8 GiB. The job hosts every parallel agent, so size it for `search.parallelism`
-concurrent analyses. Cloud Run's filesystem is in-memory and counts against that
-8 GiB together with pandas overhead, so keep `budget.input_mib` well below it.
+The template sets `sandboxLauncher: gvisor`, one task, `maxRetries: 0`, eight CPUs and
+16 GiB. The job hosts every agent, and each step now runs its search and code sandboxes
+at the same time, so size it for `2 x search.parallelism` concurrent agents. Cloud Run's
+filesystem is in-memory and counts against that 16 GiB together with pandas overhead, so
+keep `budget.input_mib` well below it.
 
 The orchestrator sets per-execution arguments and timeouts through the Jobs API, so
 no deployment edit is needed per dataset.
 
 ## Isolation
 
-Generated code runs through `sandbox do`, which gives it the goal workspace, a
-private home for the agent, the API key, and outbound network — but **not** this
-job's environment variables and **not** the metadata server. Generated Python
-therefore cannot mint tokens for the run's service identity. This is a deployment for
-a trusted operator, not a hostile-tenant execution service.
+Every agent runs through `sandbox do`, which gives it the goal workspace, a private
+home for the agent, the API key, and outbound network — but **not** this job's
+environment variables and **not** the metadata server. Generated Python therefore
+cannot mint tokens for the run's service identity. This is a deployment for a trusted
+operator, not a hostile-tenant execution service.
 
-Cloud Run sandboxes are a Preview feature. Confirm `sandboxLauncher` is accepted in
-your region and that `/usr/local/gcp/bin/sandbox` exists in a running task before
-depending on it. Confirm too that the non-root `worker` user can launch a sandbox; if
-not, run the job as root or grant the necessary capability.
+Isolation also carries a scientific guarantee, not only a security one. The literature
+agent's sandbox is given a workspace containing its goal and nothing else: the dataset
+is never copied in, so its belief cannot have been informed by the data whatever the
+agent does. `search_<node>/` in the bucket's `sandbox_artifacts/` is the audit trail —
+if a data file ever appears there, that belief is not data-blind.
+
+Cloud Run sandboxes are a Preview feature, so the orchestrator checks for
+`/usr/local/gcp/bin/sandbox` at startup. When it is missing the run does not fail:
+the agent runs directly in this container, and a `sandbox_unavailable` warning with
+`isolation=container` is logged once. Generated code then shares the job's identity
+and can reach the metadata server, so it is bounded only by the service account's own
+permissions — the bucket and Vertex predict, nothing else.
+
+To depend on the stronger boundary, confirm `sandboxLauncher` is accepted in your
+region, that the binary is present in a running task, and that the non-root `worker`
+user can launch a sandbox; if not, run the job as root or grant the necessary
+capability. Check the log line before treating a run as isolated.
 
 ## Configure and submit
 
@@ -135,8 +146,11 @@ uv run urithiru export gs://BUCKET/urithiru/RUN_ID --output /absolute/path/cloud
 
 Use Cloud Run executions and Cloud Logging for task startup, resource exhaustion and
 API errors; the engine emits one JSON line per event, which Cloud Logging parses
-natively. `status` reports the durable checkpoint, whose timestamp may be stale after
-a hard crash; it never invents completion from a submitted job.
+natively. The same lines are appended to `gs://BUCKET/PREFIX/RUN_ID/events.jsonl` and
+uploaded with each checkpoint, so anything with read access to the bucket can follow a
+run in order without Cloud Logging permissions. `status` reports the durable checkpoint,
+whose timestamp may be stale after a hard crash; it never invents completion from a
+submitted job.
 
 ## Resume
 

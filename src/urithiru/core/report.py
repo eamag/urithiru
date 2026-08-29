@@ -1,11 +1,11 @@
-"""Rank the actual completed evaluations and export their original evidence files."""
+"""Rank the completed evaluations and export them beside their original evidence."""
 
 import shutil
 from dataclasses import asdict
 from pathlib import Path
 
 from urithiru.core.models import Evaluation
-from urithiru.runtime.checkpoints import read_json, write_json
+from urithiru.runtime.files import read_json, write_json
 
 
 def format_probability(value: float | None) -> str:
@@ -24,7 +24,8 @@ def findings(directory: Path) -> list[dict]:
                 "id": identifier,
                 "hypothesis": node["claim"],
                 **result.summary(),
-                "verification": asdict(result.verification),
+                "literature": asdict(result.literature),
+                "experiment": asdict(result.experiment),
                 "diagnostics": asdict(result.surprisal),
                 "external": asdict(result.external) if result.external is not None else None,
             }
@@ -48,13 +49,13 @@ def export(directory: Path, destination: Path) -> None:
         lines += [
             f"## {position}. {row['hypothesis']}",
             "",
-            f"Empirical support: {row['empirical_support']}; seed reward: {row['seed_reward']:.4f}; "
-            f"external value: {row['external_value']:.4f}.",
+            f"Empirical support: {row['empirical_support']}; independent check: {row['verdict']}; "
+            f"seed reward: {row['seed_reward']:.4f}; external value: {row['external_value']:.4f}.",
             "",
-            f"P_param={row['p_param']:.4f}; P_search={row['p_search']:.4f}; P_code={row['p_code']:.4f}; "
-            f"P_external={format_probability(row['p_external'])}.",
+            f"P_param={row['p_param']:.4f} -> P_search={row['p_search']:.4f} -> "
+            f"P_code={row['p_code']:.4f} -> P_external={format_probability(row['p_external'])}.",
             "",
-            row["verification"]["summary"],
+            row["experiment"]["summary"],
             "",
             f"Evidence: [evaluations/{row['id']}.json](evaluations/{row['id']}.json)",
             "",

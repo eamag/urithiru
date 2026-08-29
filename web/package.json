@@ -1,0 +1,21 @@
+{
+  "name": "urithiru-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro check && astro build",
+    "check": "astro check",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "@astrojs/svelte": "^9.0.1",
+    "astro": "^7.2.9",
+    "lucide-svelte": "^1.0.1",
+    "svelte": "^5.38.7"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.4",
+    "typescript": "^5.9.2"
+  }
+}

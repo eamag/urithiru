@@ -3,6 +3,10 @@
 2026-08-28. This supersedes the infrastructure-heavy structure described in
 [design.md](design.md). The research implementation remains unchanged.
 
+**This is a historical record of the port.** A later pass on 2026-08-29 deliberately
+diverged from parts of the mapping below; those divergences are listed at the end and
+are the current behaviour where they conflict.
+
 ## What was read
 
 The active implementation was read line by line: engine (752 lines), agent (455),
@@ -90,3 +94,18 @@ Compare all active calculations, candidate decisions, retrieval ordering, outcom
 handling and checkpoint restoration against saved original artifacts. Read the
 prompt mapping explicitly. No new tests, paid model calls or cloud deployment are
 authorized by this corrective pass.
+
+## Later divergence, 2026-08-29
+
+Faithful porting was the right goal for the first pass, and it is what made these
+divergences safe to choose: each one is a decision made against a working baseline,
+not a shortcut taken instead of understanding the original.
+
+| Original behaviour | Now | Why |
+| --- | --- | --- |
+| One verification agent produced P_search then P_code in sequence, with a `p_search.json` write in between | Two agents, two containers, started together: `search` (never given the data) and `code` (never told the literature's answer) | The harness enforced Phase A by comparing file modification times against `p_search.json`. Separating the containers makes data-blindness a property of the filesystem, removes the forensics, halves the stage's wall clock, and turns `KL(P_code \|\| P_search)` from one agent's self-consistency into a disagreement between two sources |
+| Belief analysis exported 13 diagnostics: three KLs, R_ICE, log R_ICE, normalized R_ICE, fidelity, three incompatibilities, EFE, binary KL, belief change, surprise flag | Six: `kl_search_param`, `kl_code_search`, `kl_code_param`, `r_ice_norm`, `belief_change`, `is_surprising` | Nothing read the other seven, and each duplicated a kept one: `fidelity` is `1 - reward`; `r_ice` and `log_r_ice` are monotone transforms of `r_ice_norm`; the binary KL re-measures the categorical KL's move; the three incompatibilities and EFE all restate `kl_search_param` or the code belief's own entropy. `kl_code_param` was promoted from an internal denominator to a reported number, so the three hops are now all visible |
+| Deduplication: exact match, then Ward linkage over embeddings with a disjoint-set walk of scipy's merge order, asking the model at every merge | Exact match, then cosine similarity against the claims kept so far, asking the model only above a threshold | Same two-step decision, same cached model call, same "first of an equivalent group survives" outcome, without reconstructing scipy's cluster numbering; and it asks the model about pairs that could plausibly be duplicates rather than about every merge |
+| `AgentExecutionResult` carried both beliefs and was validated by a separate `validate()` call | `Literature` and `Experiment`, each frozen and validating in `__post_init__` | The records now match the containers that produce them, and an unparseable agent result fails at the boundary rather than downstream |
+| Two surprise thresholds, `surprisal_threshold` and `external_minimum_surprise` | One, `external_minimum_surprise` | Only the second gated anything; the first was stored on every evaluation and never read |
+| `agent_env` forwarded declared credentials into the sandbox, and artifacts were scanned and redacted afterwards | Removed | It was configured empty in every profile, so the redaction pass always ran over an empty secret list. Sandboxes now carry the agent's model key and nothing else, and the literature prompts say so instead of describing keys that cannot be present |

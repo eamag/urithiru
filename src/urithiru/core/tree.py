@@ -88,7 +88,7 @@ class MCTSTree:
     def backpropagate(self, node: Node) -> None:
         if node.evaluation is None:
             raise ValueError("Cannot update the tree without a completed evaluation")
-        reward = node.evaluation.reward + node.evaluation.external_value
+        reward = node.evaluation.total_reward
         current: Node | None = node
         while current is not None:
             current.visits += 1

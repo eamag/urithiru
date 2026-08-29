@@ -9,12 +9,12 @@ from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import run_v2, storage
 from google.protobuf.duration_pb2 import Duration
 
-from urithiru.runtime.checkpoints import read_json
 from urithiru.runtime.config import GoogleConfig
-from urithiru.runtime.files import file_hash, safe_path
+from urithiru.runtime.files import file_hash, read_json, safe_path
 
 CHECKPOINT_FILES = (
     "mcts_state.json",
+    "events.jsonl",
     "candidate_audits.json",
     "artifacts/embeddings.json",
     "artifacts/dedupe_llm_decisions.json",

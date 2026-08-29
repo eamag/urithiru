@@ -1,4 +1,4 @@
-"""Scientific records from the original engine, with derived values kept as properties."""
+"""The scientific records. Every one validates on construction and derives the rest."""
 
 import math
 from collections.abc import Mapping
@@ -16,16 +16,25 @@ CATEGORY_MAPPING = {
 }
 CATEGORIES = tuple(CATEGORY_MAPPING)
 SCORES = np.array(list(CATEGORY_MAPPING.values()))
-STAGES = ("proposal", "verification", "external")
+
+# A run is four agent stages. `search` and `code` are siblings: they answer the same
+# hypothesis at the same time from deliberately different evidence.
+STAGES = ("proposal", "search", "code", "external")
 RESULT_FILES = {
     "proposal": "eda_proposal.json",
-    "verification": "result.json",
+    "search": "p_search.json",
+    "code": "result.json",
     "external": "external_result.json",
 }
+# Only these stages get a copy of the seed data. The literature agent never receives
+# it, which is what makes its belief data-blind: no prompt or file check required.
+DATA_STAGES = ("proposal", "code")
 
 
 @dataclass(frozen=True)
 class Belief:
+    """Thirty votes over five likelihood categories, read through a Beta(0.5, 0.5) prior."""
+
     counts: Mapping[str, int | float]
     rationale: str
     n_samples: ClassVar[int] = 30
@@ -46,155 +55,161 @@ class Belief:
         return values / values.sum()
 
     @property
-    def category_counts(self) -> dict[str, int]:
-        return dict(
-            zip(CATEGORIES, (round(value * self.n_samples) for value in self.prob_vector), strict=True)
-        )
-
-    @property
     def n_true(self) -> float:
         return float(self.prob_vector @ SCORES) * self.n_samples
 
     @property
-    def mean(self) -> float:
-        """The plain category-score expectation, before the Beta-Bernoulli prior."""
-        return self.n_true / self.n_samples
-
-    @property
-    def alpha(self) -> float:
-        return self.alpha_0 + self.n_true
-
-    @property
-    def beta(self) -> float:
-        return self.beta_0 + self.n_samples - self.n_true
-
-    @property
     def prob_true(self) -> float:
-        return self.alpha / (self.alpha + self.beta)
+        return (self.alpha_0 + self.n_true) / (self.alpha_0 + self.beta_0 + self.n_samples)
 
     @property
     def category(self) -> str:
         return CATEGORIES[int(np.argmin(np.abs(SCORES - self.prob_true)))]
 
 
-@dataclass
-class AgentExecutionResult:
+@dataclass(frozen=True)
+class Literature:
+    """What the `search` sandbox concluded, having never been given the data."""
+
+    category_counts: dict[str, int]
+    rationale: str
+    findings: dict[str, Any]
+
+    def __post_init__(self):
+        if not isinstance(self.findings, dict):
+            raise TypeError("Literature findings must be a structured object")
+        Belief(self.category_counts, self.rationale)
+
+    @property
+    def belief(self) -> Belief:
+        return Belief(self.category_counts, self.rationale)
+
+
+@dataclass(frozen=True)
+class Experiment:
+    """What the `code` sandbox found by writing and running its own analysis."""
+
     execution_success: bool
     test_spec_valid: bool
     direction_supported: bool
     empirical_support: bool
+    category_counts: dict[str, int]
+    rationale: str
+    metrics: dict[str, Any]
+    p_value: float | None
+    p_value_corrected: float | None
     stdout: str
     stderr: str
     summary: str
-    p_value: float | None
-    p_value_corrected: float | None
-    error_code: str
-    search_category_counts: dict[str, int]
-    search_rationale: str
-    code_category_counts: dict[str, int]
-    code_rationale: str
-    literature_findings: dict[str, Any]
-    extracted_metrics: dict[str, Any]
 
-    def validate(self) -> None:
-        if not isinstance(self.extracted_metrics, dict) or not isinstance(self.literature_findings, dict):
-            raise TypeError("Scientific metrics and literature findings must be structured objects")
-        if any(
-            not isinstance(value, str) for value in (self.stdout, self.stderr, self.summary, self.error_code)
-        ):
-            raise TypeError("Execution output, summary and error code must be strings")
-        flags = [
-            self.execution_success,
-            self.test_spec_valid,
-            self.direction_supported,
-            self.empirical_support,
-        ]
-        if any(type(flag) is not bool for flag in flags) or self.empirical_support != all(flags[:3]):
+    def __post_init__(self):
+        if not isinstance(self.metrics, dict):
+            raise TypeError("Scientific metrics must be a structured object")
+        if any(not isinstance(value, str) for value in (self.stdout, self.stderr, self.summary)):
+            raise TypeError("Execution output and summary must be strings")
+        flags = [self.execution_success, self.test_spec_valid, self.direction_supported]
+        if any(type(flag) is not bool for flag in [*flags, self.empirical_support]):
+            raise TypeError("Verification outcomes must be Boolean")
+        if self.empirical_support != all(flags):
             raise ValueError("Empirical support must equal execution AND specification AND direction support")
         for value in (self.p_value, self.p_value_corrected):
             if value is not None and (not math.isfinite(value) or not 0 <= value <= 1):
                 raise ValueError("Invalid p-value")
-        Belief(self.search_category_counts, self.search_rationale)
-        Belief(self.code_category_counts, self.code_rationale)
+        Belief(self.category_counts, self.rationale)
 
     @property
-    def search(self) -> Belief:
-        return Belief(self.search_category_counts, self.search_rationale)
-
-    @property
-    def code(self) -> Belief:
-        return Belief(self.code_category_counts, self.code_rationale)
+    def belief(self) -> Belief:
+        return Belief(self.category_counts, self.rationale)
 
 
 @dataclass(frozen=True)
-class ExternalVerificationResult:
+class External:
+    """What the `external` sandbox found elsewhere, or why it declined to answer."""
+
     source: str
-    external_category_counts: dict[str, int] | None
-    external_rationale: str
+    category_counts: dict[str, int] | None
+    rationale: str
     estimated_cost: float
     summary: str
 
     def __post_init__(self):
         if self.estimated_cost < 0 or not math.isfinite(self.estimated_cost):
             raise ValueError("External cost must be finite and nonnegative")
-        if self.external_category_counts is not None:
-            Belief(self.external_category_counts, self.external_rationale)
+        if self.category_counts is not None:
+            Belief(self.category_counts, self.rationale)
 
     @property
     def belief(self) -> Belief | None:
-        return (
-            Belief(self.external_category_counts, self.external_rationale)
-            if self.external_category_counts is not None
-            else None
-        )
+        if self.category_counts is None:
+            return None
+        return Belief(self.category_counts, self.rationale)
 
 
 @dataclass(frozen=True)
-class SurprisalResult:
-    belief_change: float
-    kl_divergence: float
-    is_surprising: bool
-    kl_code_search: float
+class Surprisal:
+    """One number per hop, plus whether the move was big enough to check independently."""
+
     kl_search_param: float
-    r_ice: float
-    log_r_ice: float
+    kl_code_search: float
+    kl_code_param: float
     r_ice_norm: float
-    fidelity: float
-    incompatibility_c_dm: float
-    incompatibility_c_ce: float
-    incompatibility_c_credal: float
-    efe: float
+    belief_change: float
+    is_surprising: bool
 
 
 @dataclass(frozen=True)
 class Evaluation:
+    """One hypothesis, fully judged. Rewards are frozen here because the tree used them."""
+
     prior: Belief
-    verification: AgentExecutionResult
-    surprisal: SurprisalResult
-    external: ExternalVerificationResult | None
+    literature: Literature
+    experiment: Experiment
+    external: External | None
     external_error: str | None
+    surprisal: Surprisal
     reward: float
     external_value: float
 
     @property
-    def posterior(self) -> Belief:
-        external = self.external.belief if self.external is not None else None
-        return external if external is not None else self.verification.code
+    def search(self) -> Belief:
+        return self.literature.belief
+
+    @property
+    def code(self) -> Belief:
+        return self.experiment.belief
 
     @property
     def external_belief(self) -> Belief | None:
         return self.external.belief if self.external is not None else None
 
+    @property
+    def posterior(self) -> Belief:
+        return self.external_belief or self.code
+
+    @property
+    def total_reward(self) -> float:
+        return self.reward + self.external_value
+
+    @property
+    def verdict(self) -> str:
+        """How the independent check landed, in the one wording the report and UI share."""
+        external = self.external_belief
+        if external is None:
+            return "no independent data"
+        return "replicated" if (external.prob_true > 0.5) == (self.code.prob_true > 0.5) else "contradicted"
+
     def summary(self) -> dict:
-        """The single description of an evaluation shared by the live log and the report."""
+        """The single description of an evaluation shared by the live log, report and UI."""
         external = self.external_belief
         return {
             "p_param": self.prior.prob_true,
-            "p_search": self.verification.search.prob_true,
-            "p_code": self.verification.code.prob_true,
+            "p_search": self.search.prob_true,
+            "p_code": self.code.prob_true,
             "p_external": external.prob_true if external is not None else None,
-            "empirical_support": self.verification.empirical_support,
-            "reward": self.reward + self.external_value,
+            "empirical_support": self.experiment.empirical_support,
+            "belief_change": self.surprisal.belief_change,
+            "verdict": self.verdict,
+            "reward": self.total_reward,
             "seed_reward": self.reward,
             "external_value": self.external_value,
             "external_error": self.external_error,
@@ -202,14 +217,13 @@ class Evaluation:
 
     @classmethod
     def from_dict(cls, data: dict) -> "Evaluation":
-        verification = AgentExecutionResult(**data["verification"])
-        verification.validate()
         return cls(
             Belief(**data["prior"]),
-            verification,
-            SurprisalResult(**data["surprisal"]),
-            ExternalVerificationResult(**data["external"]) if data["external"] is not None else None,
+            Literature(**data["literature"]),
+            Experiment(**data["experiment"]),
+            External(**data["external"]) if data["external"] is not None else None,
             data["external_error"],
+            Surprisal(**data["surprisal"]),
             data["reward"],
             data["external_value"],
         )
@@ -217,16 +231,14 @@ class Evaluation:
 
 @dataclass
 class CandidateAudit:
+    """Why a proposed claim was or was not evaluated. Written for every candidate."""
+
     id: str
     claim: str
     generation: int
-    created_at_node_count: int
-    exact_duplicate: bool
-    exact_duplicate_of: str | None
-    semantic_duplicate: bool | None
-    semantic_duplicate_of: str | None
-    prior_mean: float | None
+    duplicate_of: str | None
     similarity: float | None
+    prior: float | None
     selected: bool
     selected_step: int | None
     rejection_reason: str | None

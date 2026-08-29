@@ -2,7 +2,9 @@ runtime = "docker"
 
 [budget]
 proposal_minutes = 5
-verification_minutes = 10
+# search and code run at the same time, in separate sandboxes.
+search_minutes = 8
+code_minutes = 10
 external_minutes = 10
 grace_minutes = 4
 max_output_tokens = 16384
@@ -14,7 +16,6 @@ parallelism = 2
 branching_factor = 5
 top_k = 25
 uct_c = 1.414
-surprisal_threshold = 0.3
 external_minimum_surprise = 0.3
 external_opportunity_weight = 0.3
 external_cost_weight = 0.5
@@ -30,4 +31,3 @@ effort = "high"
 [options]
 image = "urithiru-sandbox:latest"
 credential_volume = "agy_credentials"
-agent_env = []

@@ -14,12 +14,11 @@ from pathlib import Path
 from threading import Event
 from typing import TYPE_CHECKING
 
-from urithiru.core.models import RESULT_FILES, Dataset, Goal
-from urithiru.runtime.checkpoints import read_json, write_json
+from urithiru.core.models import DATA_STAGES, RESULT_FILES, Dataset, Goal
 from urithiru.runtime.config import Config, DockerConfig
 from urithiru.runtime.control import Cancelled
 from urithiru.runtime.events import emit
-from urithiru.runtime.files import DatasetFiles, safe_path
+from urithiru.runtime.files import DatasetFiles, read_json, safe_path, write_json
 
 if TYPE_CHECKING:
     from urithiru.cloud.client import GoogleCloud
@@ -34,8 +33,18 @@ WORKSPACE = "/workspace"
 # The sandbox gets no parent environment, so the agent's home and key are mounted in.
 AGENT_HOME = "/agent-home"
 AGENT_SECRET = "/agent-secret"
-# Headless authentication needs the key *and* this provider setting; the key alone does nothing.
-AGENT_SETTINGS = {"modelProvider": "gemini", "trustedWorkspaces": [WORKSPACE]}
+
+
+def agent_settings(directory: Path) -> dict:
+    """Headless authentication needs the key *and* this provider setting; the key alone does nothing.
+
+    A workspace is `/workspace` when the sandbox bind-mounts it, and its real path when the
+    sandbox is absent, so both are trusted rather than rewriting settings per goal.
+    """
+    return {
+        "modelProvider": "gemini",
+        "trustedWorkspaces": [WORKSPACE, str((directory / "sandbox_artifacts").resolve())],
+    }
 
 
 class Sandbox:
@@ -56,7 +65,9 @@ class Sandbox:
         if workspace.exists():
             workspace.rename(workspace.with_name(f"{goal.id}_previous_{uuid.uuid4().hex[:8]}"))
         workspace.mkdir(parents=True)
-        if goal.stage != "external":
+        # The literature and external agents are never given the seed files. That absence,
+        # not a prompt or a timestamp check, is what makes their beliefs independent of it.
+        if goal.stage in DATA_STAGES:
             DatasetFiles(self.directory).copy_to(self.dataset, workspace)
         (workspace / "goal.txt").write_text(goal.prompt)
         self.execute(goal, workspace)
@@ -92,7 +103,7 @@ class Sandbox:
                     raise
             finally:
                 self.cleanup(goal, process, workspace)
-                emit("agent_finished", goal=goal.id, returncode=process.returncode)
+                emit("agent_finished", goal=goal.id, stage=goal.stage, returncode=process.returncode)
 
     def launch(self, goal: Goal, workspace: Path) -> list[str]:
         raise NotImplementedError
@@ -128,16 +139,12 @@ class DockerSandbox(Sandbox):
         return f"urithiru_{self.directory.name}_{goal.id}"
 
     def launch(self, goal: Goal, workspace: Path) -> list[str]:
-        for name in self.options.agent_env:
-            if not os.environ[name]:
-                raise ValueError(f"Empty declared credential: {name}")
         subprocess.run(self.remove(goal), capture_output=True, timeout=30, check=False)
         return [
             *["docker", "run", "--rm", "--memory=4g", "--cpus=3", "--security-opt=no-new-privileges"],
             *["--name", self.container_name(goal)],
             *["-v", f"{self.options.credential_volume}:/root"],
             *["-v", f"{workspace.resolve()}:{WORKSPACE}"],
-            *[part for name in self.options.agent_env for part in ("-e", name)],
             *["-w", WORKSPACE, "--entrypoint", DOCKER_AGENT, self.options.image],
             *self.agent_arguments(goal),
         ]
@@ -148,24 +155,9 @@ class DockerSandbox(Sandbox):
     def cleanup(self, goal: Goal, process, workspace: Path) -> None:
         subprocess.run(self.remove(goal), capture_output=True, timeout=30, check=False)
         super().cleanup(goal, process, workspace)
-        self.sanitize(workspace)
-
-    def sanitize(self, workspace: Path) -> None:
-        secrets = [os.environ[name].encode() for name in self.options.agent_env]
         for path in workspace.rglob("*"):
             if path.is_symlink() or (path.is_file() and path.name == ".env"):
                 path.unlink()
-            elif secrets and path.is_file() and path.relative_to(workspace).parts[0] != "inputs":
-                self.redact(path, secrets)
-
-    def redact(self, path: Path, secrets: list[bytes]) -> None:
-        """Only a file that actually carries a credential is rewritten."""
-        data = path.read_bytes()
-        if not any(secret in data for secret in secrets):
-            return
-        for secret in secrets:
-            data = data.replace(secret, b"[REDACTED]")
-        path.write_bytes(data)
 
 
 class CloudSandbox(Sandbox):
@@ -173,6 +165,8 @@ class CloudSandbox(Sandbox):
 
     The sandbox gets the workspace and outbound network, but not this job's environment
     or the metadata server, so generated code cannot reach the run's service identity.
+    Cloud Run sandboxes are a Preview feature; where the binary is absent the agent runs
+    directly in this container instead, which completes the run with weaker isolation.
     """
 
     def __init__(self, cloud: "GoogleCloud", directory: Path, stop: Event):
@@ -184,13 +178,24 @@ class CloudSandbox(Sandbox):
         self.home, self.secret = private / "home", private / "secret"
         settings = self.home / ".gemini" / "antigravity-cli"
         settings.mkdir(parents=True)
-        write_json(settings / "settings.json", AGENT_SETTINGS)
+        write_json(settings / "settings.json", agent_settings(directory))
         self.secret.mkdir()
         (self.secret / "key").write_text(os.environ["GEMINI_API_KEY"])
         (self.secret / "key").chmod(0o600)
+        self.isolated = Path(CLOUD_SANDBOX).exists()
+        if not self.isolated:
+            emit("sandbox_unavailable", severity="WARNING", path=CLOUD_SANDBOX, isolation="container")
 
     def launch(self, goal: Goal, workspace: Path) -> list[str]:
         agent = " ".join(shell_quote(part) for part in [CLOUD_AGENT, *self.agent_arguments(goal)])
+        if not self.isolated:
+            # No bind mounts, so the agent uses the real paths and the job's own environment,
+            # which already carries GEMINI_API_KEY from the deployment's secret reference.
+            script = (
+                f"export HOME={shell_quote(str(self.home))}; "
+                f"cd {shell_quote(str(workspace.resolve()))} && exec {agent}"
+            )
+            return ["/bin/bash", "-lc", script]
         script = (
             f'export HOME={AGENT_HOME} GEMINI_API_KEY="$(cat {AGENT_SECRET}/key)"; '
             f"cd {WORKSPACE} && exec {agent}"

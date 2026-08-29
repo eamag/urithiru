@@ -1,44 +1,60 @@
 # Standalone Urithiru
 
-The implementation follows the original research engine, with shared state held
-by cohesive classes and short methods. The line-by-line source mapping and the
-mistakes corrected from the initial rewrite are recorded in [original-logic.md](original-logic.md).
+The implementation follows the original research engine, with shared state held by
+cohesive classes and short methods. The line-by-line source mapping, and where this
+version has since deliberately diverged, are in [original-logic.md](original-logic.md).
 
 ## What stays
 
-The active workflow is EDA → candidate deduplication/selection → parametric prior
-→ literature assessment → empirical verification → optional independent external
-verification → one MCTS update. It keeps UCT, progressive widening, evidence
-retrieval, candidate audits and every active belief diagnostic.
+The workflow is EDA → candidate deduplication/selection → parametric prior →
+literature belief → empirical belief → optional independent external verification →
+one MCTS update. It keeps UCT, progressive widening, evidence retrieval, candidate
+audits, the belief representation and the reward.
 
-`BeliefAnalysis` holds prior/search/code beliefs. `CandidateSelector` holds its
-model and caches. `MCTSTree` holds the root and nodes. `UrithiruEngine` holds the
-run state. `ResearchAgent` builds the original scientific goals; the sandbox runs
-them. Methods take the changing domain inputs, not repeated configuration bundles.
+`BeliefAnalysis` holds one evaluation's three KLs. `CandidateSelector` holds its model
+and caches. `MCTSTree` holds the root and nodes. `UrithiruEngine` holds the run state.
+`ResearchAgent` builds the goals; the sandbox runs them. Methods take the changing
+domain inputs, not repeated configuration bundles.
 
 ## What changes
 
 - The package installs independently, without importing the research checkout.
 - CSV/TSV/Parquet/XLSX/XLS and optional text metadata replace benchmark-specific loaders.
-- EDA supplies a descriptive schema for subsequent data-blind verification.
-- Docker uses the operator's existing agent image and login volume; extra credentials are declared.
+- The literature and empirical beliefs come from **two agents in two containers, started
+  together**. The literature agent is never given the data, so data-blindness is
+  structural rather than prompt-enforced and audited afterwards from file timestamps.
 - Both runtimes launch the same agent CLI; Cloud Run isolates it with a Cloud Run sandbox.
-- Checkpoints are ordinary JSON files, atomically replaced using a temporary file.
-- One `[budget]` config section holds every timeout, turn cap, download cap and retry count.
+- Every record validates itself on construction, so an unparseable agent result fails at
+  the boundary and the stage retries.
+- Checkpoints are ordinary JSON, atomically replaced; the event stream is `events.jsonl`
+  beside them, so anything outside the process can follow a run.
+- One `[budget]` section holds every timeout, output cap and retry count, one field per stage.
 - Four packages: `core` (science), `agents` (prompts and readers), `runtime` (execution), `cloud`.
-- Every event is one JSON line on stdout: readable locally, structured in Cloud Logging.
 
 There is no generic store, journal, task-state framework, reconciliation command,
 streaming layer or doctor command. Historical experiments and inactive belief modes
-are not ported. See [architecture.md](architecture.md), [local.md](local.md), [google.md](google.md), and [provenance.md](provenance.md).
+are not ported. See [architecture.md](architecture.md), [local.md](local.md),
+[google.md](google.md), and [provenance.md](provenance.md).
+
+## What was deliberately left out
+
+- **A second state store.** `mcts_state.json` is already authoritative and already
+  checkpointed to the bucket. Mirroring it into a database would create two copies to
+  keep in agreement across a resume, for no capability the bucket lacks.
+- **An additional agent framework.** The Google GenAI SDK does the prior, merge and
+  embedding calls, and the agent CLI runs in the sandboxes. Wrapping working components
+  in a second orchestration layer adds a layer, not a behaviour.
+- **Belief diagnostics nothing reads.** Six numbers survive because each answers a
+  question no other answers; see [architecture.md](architecture.md). Variants that were
+  monotone transforms of a kept number, or a second measure of the same disagreement,
+  were removed rather than exported unused.
 
 ## Verification boundary
 
-Verify deterministic scientific calculations, cached candidate decisions, result
-parsing, checkpoint restoration and standalone packaging without adding tests or
-calling models. Docker and Google end-to-end execution remain unverified until
-their prerequisites and separately authorized execution are available.
+Deterministic behaviour is verified offline against stubs and saved artifacts:
+[offline-verification.md](offline-verification.md). Docker and Google end-to-end
+execution remain unverified until their prerequisites and separately authorized
+execution are available.
 
-No cloud resources are provisioned, no public service is exposed, and no license
-or publication decision is made by this implementation.
-
+No cloud resources are provisioned, no public service is exposed, and no license or
+publication decision is made by this implementation.

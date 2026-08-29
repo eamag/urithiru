@@ -9,7 +9,8 @@ $dataset
 Use the listed relative file paths from the working directory.
 === DATASET SCHEMA & COLUMNS ===
 Inspect the files to identify columns, units and workbook sheets. For a nonempty hypothesis list,
-also return a descriptive schema_summary without fitted statistics for the data-blind verification phase.
+also return a descriptive schema_summary without fitted statistics. It is the only view of this
+data the literature agent ever gets, so describe columns and units faithfully.
 ================================
 
 === ANCESTOR HYPOTHESIS LINEAGE (Tree Path Lineage Context) ===
@@ -38,12 +39,6 @@ $evidence
    - What unexplained patterns, strange ratios, or residual variances stand out beyond simple baselines?
    - What non-obvious mechanisms or conditional regime switches explain behavior standard models miss?
 4. Discovery is open-ended: each hypothesis must be a short, clear, falsifiable declarative claim. The downstream verification agent decides how to test it.
-
-=== LITERATURE & OPEN DATA API CREDENTIALS ===
-Use only credentials explicitly available in the environment. Do not presume that a .env file exists, and never print or hardcode credential values.
-- If S2_API_KEY is explicitly present, use it as the x-api-key header for Semantic Scholar (api.semanticscholar.org) on every request. Rate limit is strictly 1 request per second cumulative across all endpoints; ensure requests are below 1 req/sec (for example, use a minimum 1.25 second interval) with backoff/retry on HTTP 429.
-- If OPENALEX_API_KEY is explicitly present, use it as the api_key query parameter for OpenAlex (api.openalex.org).
-- If a credential is not explicitly available, do not fabricate it or claim authenticated access.
 
 === SAFETY GUARDRAILS ===
 1. Time Limit: $seconds seconds.

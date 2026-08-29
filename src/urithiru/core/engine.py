@@ -1,4 +1,4 @@
-"""Original discovery loop decomposed into short methods over shared run state."""
+"""The discovery loop: propose, deduplicate, evaluate in parallel, update the tree."""
 
 import json
 import random
@@ -8,13 +8,13 @@ from datetime import UTC, datetime
 
 import numpy as np
 
-from urithiru.core.beliefs import BeliefAnalysis
-from urithiru.core.deduplication import CandidateSelector, canonicalize
+from urithiru.core.beliefs import BeliefAnalysis, external_value
+from urithiru.core.candidates import CandidateSelector, canonicalize
 from urithiru.core.models import CandidateAudit, Evaluation
 from urithiru.core.tree import MCTSTree, Node
-from urithiru.runtime.checkpoints import read_json, write_json
 from urithiru.runtime.control import Cancelled
 from urithiru.runtime.events import emit
+from urithiru.runtime.files import read_json, write_json
 
 
 class UrithiruEngine:
@@ -80,9 +80,9 @@ class UrithiruEngine:
             leaf.queue.remove(candidate.id)
             leaf.tried.append(candidate.claim)
             self.pending.append(node)
-            candidate.prior_mean = prior.mean
+            candidate.prior = prior.prob_true
             candidate.selected_step = len(self.completed) + len(self.pending)
-            emit("hypothesis_selected", node=node.id, hypothesis=node.claim, p_param=prior.prob_true)
+            emit("hypothesis_selected", node=node.id, hypothesis=node.claim, p_param=candidate.prior)
             self.save_checkpoint()
 
     def acquire_candidate(self, leaf: Node) -> CandidateAudit | None:
@@ -110,51 +110,38 @@ class UrithiruEngine:
         else:
             self.generation += 1
             for index, claim in enumerate(claims):
-                candidate = self.new_candidate(leaf, claim, index)
+                candidate = CandidateAudit(
+                    id=f"{leaf.id}_generation_{self.generation:06d}_candidate_{index:03d}",
+                    claim=canonicalize(claim),
+                    generation=self.generation,
+                    duplicate_of=None,
+                    similarity=None,
+                    prior=None,
+                    selected=False,
+                    selected_step=None,
+                    rejection_reason=None,
+                )
                 leaf.candidates.append(candidate)
                 leaf.queue.append(candidate.id)
         emit("proposals_ready", node=leaf.id, proposed=len(claims), terminal=leaf.terminal)
         self.save_checkpoint()
 
-    def new_candidate(self, leaf: Node, claim: str, index: int) -> CandidateAudit:
-        return CandidateAudit(
-            id=f"{leaf.id}_generation_{self.generation:06d}_candidate_{index:03d}",
-            claim=canonicalize(claim),
-            generation=self.generation,
-            created_at_node_count=len(self.completed),
-            exact_duplicate=False,
-            exact_duplicate_of=None,
-            semantic_duplicate=None,
-            semantic_duplicate_of=None,
-            prior_mean=None,
-            similarity=None,
-            selected=False,
-            selected_step=None,
-            rejection_reason=None,
-        )
-
     def deduplicate(self, leaf: Node) -> list[CandidateAudit]:
+        """Drop repeats of anything already evaluated, and record why for every candidate."""
         registry = {candidate.id: candidate for candidate in leaf.candidates}
-        candidates = [registry[key] for key in leaf.queue]
-        surviving, exact, semantic = self.selector.deduplicate(
-            [candidate.claim for candidate in candidates], [node.claim for node in self.completed]
+        queued = [registry[key] for key in leaf.queue]
+        duplicates = self.selector.deduplicate(
+            [candidate.claim for candidate in queued], [node.claim for node in self.completed]
         )
-        for index, duplicate in exact.items():
-            item = candidates[index]
-            item.exact_duplicate, item.exact_duplicate_of = True, duplicate
-            item.rejection_reason = "exact_duplicate"
-        for index, duplicate in semantic.items():
-            item = candidates[index]
-            item.semantic_duplicate, item.semantic_duplicate_of = True, duplicate
-            item.rejection_reason = "semantic_duplicate"
-        result = [candidates[index] for index in surviving]
-        for item in result:
-            item.semantic_duplicate = False
-        leaf.queue = [item.id for item in result]
-        emit("deduplicated", node=leaf.id, surviving=len(result), exact=len(exact), semantic=len(semantic))
-        return result
+        for index, (original, reason) in duplicates.items():
+            queued[index].duplicate_of, queued[index].rejection_reason = original, reason
+        surviving = [item for index, item in enumerate(queued) if index not in duplicates]
+        leaf.queue = [item.id for item in surviving]
+        emit("deduplicated", node=leaf.id, surviving=len(surviving), removed=len(duplicates))
+        return surviving
 
     def select_candidate(self, candidates: list[CandidateAudit]) -> CandidateAudit:
+        """Take the claim least like anything already evaluated; at the root, take any."""
         scores = (
             self.selector.diversity(
                 [item.claim for item in candidates], [node.claim for node in self.completed]
@@ -176,7 +163,7 @@ class UrithiruEngine:
         result = node.evaluation
         if result is None:
             raise ValueError("Evaluated node has no evidence")
-        findings = json.dumps(result.verification.extracted_metrics, sort_keys=True)
+        findings = json.dumps(result.experiment.metrics, sort_keys=True)
         return (
             f"Hypothesis: {node.claim} (Belief after experiment: {result.posterior.category}) "
             f"| Evidence Details: Findings: {findings}"
@@ -212,30 +199,47 @@ class UrithiruEngine:
             node.evaluation = Evaluation.from_dict(read_json(path))
             return
         self.check_cancelled()
-        verification = self.agent.verify(node)
         if node.prior is None:
             raise ValueError("Selected node has no parametric prior")
-        beliefs = BeliefAnalysis(node.prior, verification.search, verification.code)
+        literature, experiment = self.investigate(node)
+        beliefs = BeliefAnalysis(node.prior, literature.belief, experiment.belief)
+        surprisal = beliefs.surprisal(self.config.external_minimum_surprise)
         external, error = (
-            self.external(node, verification)
-            if (beliefs.reward >= self.config.external_minimum_surprise)
-            else (None, None)
+            self.external(node, literature, experiment) if surprisal.is_surprising else (None, None)
         )
         result = Evaluation(
-            node.prior,
-            verification,
-            beliefs.evaluate(self.config.surprisal_threshold),
-            external,
-            error,
-            beliefs.reward,
-            beliefs.external_value(external, self.config) if external is not None else 0.0,
+            prior=node.prior,
+            literature=literature,
+            experiment=experiment,
+            external=external,
+            external_error=error,
+            surprisal=surprisal,
+            reward=beliefs.reward,
+            external_value=external_value(
+                external,
+                experiment.belief,
+                self.config.external_opportunity_weight,
+                self.config.external_cost_weight,
+            ),
         )
         write_json(path, result)
         node.evaluation = result
 
-    def external(self, node: Node, verification):
+    def investigate(self, node: Node):
+        """Two agents, two containers, one hypothesis, at the same time.
+
+        The literature agent never receives the data and the experiment agent never
+        learns what the literature said, so the distance between their answers is a
+        disagreement between independent sources rather than one agent's self-consistency.
+        """
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            searching = pool.submit(self.agent.literature, node)
+            coding = pool.submit(self.agent.experiment, node)
+            return searching.result(), coding.result()
+
+    def external(self, node: Node, literature, experiment):
         try:
-            return self.agent.external(node, verification), None
+            return self.agent.external(node, literature, experiment), None
         except Exception as error:
             self.check_cancelled()
             emit(

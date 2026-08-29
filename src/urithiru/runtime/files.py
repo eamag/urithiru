@@ -1,8 +1,12 @@
-"""Original data and generated artifacts remain ordinary files."""
+"""How bytes reach disk: path safety, hashing, atomic JSON, and the staged inputs."""
 
 import hashlib
+import json
+import os
 import shutil
+from dataclasses import asdict
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 from urithiru.core.models import Dataset
 
@@ -22,6 +26,21 @@ def safe_path(directory: Path, name: str) -> Path:
 def file_hash(path: Path) -> str:
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def read_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_json(path: Path, data: Any) -> None:
+    """Write through a temporary file so a checkpoint is never half-written."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with temporary.open("w", encoding="utf-8") as stream:
+        json.dump(data, stream, ensure_ascii=False, allow_nan=False, indent=2, default=asdict)
+        stream.flush()
+        os.fsync(stream.fileno())
+    temporary.replace(path)
 
 
 class DatasetFiles:

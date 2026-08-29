@@ -26,7 +26,8 @@ spec:
                       name: urithiru-gemini-api-key
               resources:
                 limits:
-                  # The orchestrator now hosts every parallel agent, not just the search loop.
-                  cpu: "4"
-                  memory: 8Gi
+                  # The orchestrator hosts every agent. A step runs its search and code
+                  # sandboxes at once, so size for 2 x search.parallelism concurrent agents.
+                  cpu: "8"
+                  memory: 16Gi
 

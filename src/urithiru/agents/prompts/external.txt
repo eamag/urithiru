@@ -14,27 +14,24 @@ Seed dataset, which must not be reused: $dataset
 Seed schema is supplied only for construct and measurement mapping.
 
 EXTERNAL TEST
-1. Search public repositories and relevant papers for observation-level data that directly measure every construct in the literal hypothesis. Do more than 10 web searches, and more than 5 science-specific ones. Mark a query as scientific when it targets literature or research data; the harness counts both totals and rejects a result below these thresholds.
+1. Search public repositories and relevant papers for observation-level data that directly measure every construct in the literal hypothesis. Search broadly before concluding that nothing independent exists; abstaining after two queries is not an answer.
 2. The source must be independent: not the seed record, a mirror, derived table, overlapping sample, or the same collection campaign presented elsewhere.
 3. Preserve the literal population and scope. Do not broaden a local claim, substitute a nearby construct, or invent an operational threshold to fit available data.
 4. Before execution, identify one signed primary estimand that directly decides the claim. Check units, measurement compatibility, sample size, power, missingness, confounding, outliers, and a simple baseline.
-5. If one dataset is valid, download it, save the analysis code, execute the test, and include the primary effect, uncertainty, and p-value in external_rationale.
+5. If one dataset is valid, download it, save the analysis code, execute the test, and include the primary effect, uncertainty, and p-value in rationale.
 6. Allocate exactly 30 votes across these likelihood categories from the external result:
    1. definitely false (score 0.0)
    2. maybe false (score 0.25)
    3. uncertain (score 0.50)
    4. maybe true (score 0.75)
    5. definitely true (score 1.0)
-7. If no valid test executes, set external_category_counts to null, source to none, and explain the binding construct, independence, scope, estimand, power, or access failure.
+7. If no valid test executes, set category_counts to null, source to none, and explain the binding construct, independence, scope, estimand, power, or access failure.
 
 COST
 Estimate the total effort required for this verification as estimated_cost. Use a normalized scale: 0.1 for an immediately usable public dataset, 0.3 for moderate retrieval and cleaning, 0.6 for a difficult multi-source analysis, 1.0 for a task that would consume a full verification budget, and values above 1.0 when new data collection or substantial manual work would be required. Estimate the cost even when no valid test executes.
 
-=== LITERATURE & OPEN DATA API CREDENTIALS ===
-Use only credentials explicitly available in the environment. Do not presume that a .env file exists, and never print or hardcode credential values.
-- If S2_API_KEY is explicitly present, use it as the x-api-key header for Semantic Scholar (api.semanticscholar.org) on every request. Rate limit is strictly 1 request per second cumulative across all endpoints; ensure requests are below 1 req/sec (for example, use a minimum 1.25 second interval) with backoff/retry on HTTP 429.
-- If OPENALEX_API_KEY is explicitly present, use it as the api_key query parameter for OpenAlex (api.openalex.org).
-- If a credential is not explicitly available, do not fabricate it or claim authenticated access.
+=== NETWORK ===
+You have outbound network but no API credentials, and none exist to be found. Use public unauthenticated endpoints (web search, OpenAlex, Crossref) and stay within their rate limits. Never fabricate a source or claim authenticated access.
 
 === TIME GUARDRAIL ===
 Strict total time limit of $seconds seconds. Every tool path is relative to your working directory;
@@ -44,15 +41,15 @@ absolute paths are rejected.
 Write the relative path `external_result.json` with exactly this shape:
 {
   "source": "The independent dataset URL, or none when no valid test executed.",
-  "external_category_counts": {
+  "category_counts": {
     "definitely false": 0,
     "maybe false": 0,
     "uncertain": 0,
     "maybe true": 0,
     "definitely true": 0
   },
-  "external_rationale": "The external result, its primary signed estimand, uncertainty and p-value.",
+  "rationale": "The external result, its primary signed estimand, uncertainty and p-value.",
   "estimated_cost": 0.3,
   "summary": "Short scientific conclusion of the external verification."
 }
-For a valid external test, external_category_counts must contain exactly 30 votes and external_rationale must ground the belief allocation only in the external result. When no test executes, replace external_category_counts with null, set source to none, and explain the binding failure as specified above.
+For a valid external test, category_counts must contain exactly 30 votes and rationale must ground the belief allocation only in the external result. When no test executes, replace category_counts with null, set source to none, and explain the binding failure as specified above.

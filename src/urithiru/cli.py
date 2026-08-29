@@ -54,13 +54,15 @@ def run(
     ] = None,
     output: Annotated[Path, typer.Option(help="Where local run directories are created.")] = Path("runs"),
     proposal_minutes: Annotated[int | None, typer.Option(help="Override the profile's stage limit.")] = None,
-    verification_minutes: Annotated[int | None, typer.Option(help="Override the profile's limit.")] = None,
+    search_minutes: Annotated[int | None, typer.Option(help="Override the literature stage's limit.")] = None,
+    code_minutes: Annotated[int | None, typer.Option(help="Override the experiment stage's limit.")] = None,
     external_minutes: Annotated[int | None, typer.Option(help="Override the profile's limit.")] = None,
 ) -> None:
     """Start a new discovery run over one or more data files."""
     minutes = {
         "proposal_minutes": proposal_minutes,
-        "verification_minutes": verification_minutes,
+        "search_minutes": search_minutes,
+        "code_minutes": code_minutes,
         "external_minutes": external_minutes,
     }
     profile = Config.read(config, {name: value for name, value in minutes.items() if value is not None})

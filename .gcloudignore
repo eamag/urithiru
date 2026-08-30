@@ -1,4 +1,5 @@
-# Cloud Build only needs what the Dockerfile copies.
+# Cloud Build only needs what the two Dockerfiles copy: the package for the job image,
+# and additionally web/ for the console image.
 *
 !Dockerfile
 !pyproject.toml
@@ -8,5 +9,12 @@
 !src/**
 !deploy/
 !deploy/analysis-requirements.txt
+!deploy/web.Dockerfile
+!web/
+!web/**
+# Build output and dependencies are rebuilt inside the image, never uploaded.
+web/node_modules/**
+web/dist/**
+web/.astro/**
 **/__pycache__/**
 **/*.pyc

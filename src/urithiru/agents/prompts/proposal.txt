@@ -54,10 +54,10 @@ everything you leave in the working directory is kept as evidence.
    proposal produced without executing code is rejected, including when the stop rule applies.
 
 === OUTPUT REQUIREMENT ===
-Save the final structured JSON result to the relative path `eda_proposal.json`, in the
-directory you started in and never under an absolute path, your home directory or a
-temporary directory. The engine reads the working directory only. It must contain
-EXACTLY these keys and no others:
+Save the final structured JSON result as `eda_proposal.json` under the results
+directory your launch instruction names, by its absolute path. Your home directory
+is not that directory, and a result written anywhere else is discarded. It must
+contain EXACTLY these keys and no others:
 {
   "hypotheses": [
     {"hypothesis": "A short falsifiable declarative claim."}

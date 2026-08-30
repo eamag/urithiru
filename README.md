@@ -47,9 +47,10 @@ uv run urithiru --help
 The cloud runtime uses the **Antigravity CLI** for the agents, the **Google GenAI
 SDK** for priors, deduplication and embeddings, one **Cloud Run Job** for the search
 loop, a private workspace and `HOME` per goal, and **Cloud Storage** for inputs,
-checkpoints and artifacts. Preview gVisor isolation can be enabled when available;
-otherwise the run logs its container-isolation fallback. There is no second state
-store: the checkpoint and event log in the bucket are what a run is.
+checkpoints and artifacts. The Preview gVisor sandbox launcher is currently unavailable
+in standard Cloud Run environments; the orchestrator plainly discloses this by falling
+back to in-container isolation and emitting a `sandbox_unavailable` event. There is no
+second state store: the checkpoint and event log in the bucket are what a run is.
 
 1. Copy `configs/google.toml` and replace `project` and `bucket` with your own.
    Placeholder values are rejected at load time.
@@ -70,10 +71,15 @@ uv run urithiru export gs://your-bucket/urithiru/<run-id> --output ./export
 
 ## Watch it
 
-`web/` is a static page that renders a run: the search tree, the four beliefs behind
-each hypothesis, and the event log. It has no server and no credentials —
-`urithiru publish` copies the run's checkpoint and event log next to it, and `--watch`
-keeps copying until the run finishes.
+`web/` is an Astro app on the Node adapter that renders a run: the search tree, the
+four beliefs behind each hypothesis, and the event log. Every run page is served from
+files `urithiru publish` copies next to it, so reading a run needs nothing but the
+static output; `--watch` keeps copying until the run finishes.
+
+Its one server route launches and cancels runs by calling this CLI, so the server, not
+the browser, holds the credentials and the bucket. Published artifacts identify a run by
+its id alone and never name the project or bucket. Launching is disabled unless
+`URITHIRU_LAUNCH_TOKEN` is set, which is why a public deployment is read-only by default.
 
 ```sh
 uv run urithiru publish gs://your-bucket/urithiru/<run-id> --watch
@@ -160,14 +166,28 @@ every command works on both. The entry point is `app()` in
 [src/urithiru/cli.py](src/urithiru/cli.py), where each command is one function whose
 signature is its argument list and defaults.
 
-## Reliability
+## Verification and Tests
 
-Runs are checkpointed after every state change and resume from where they stopped;
-completed evaluations, embeddings and duplicate decisions are reused rather than
-recomputed. A transient agent or API
-failure retries up to the profile's `stage_attempts`. Cancellation is cooperative and
-preserves the checkpoint. Deterministic behaviour is verified offline against saved
-artifacts: [docs/offline-verification.md](docs/offline-verification.md).
+A test suite covers the load-bearing engineering and scientific components:
+
+- **Belief arithmetic & posterior** (`tests/test_beliefs.py`): 30-vote pseudocounts, Beta(0.5, 0.5) smoothing, KL divergence in nats, and surprisal/reward calculations.
+- **Candidate selection** (`tests/test_candidates.py`): Exact and semantic deduplication, cosine similarity diversity ranking, and retrieval caching.
+- **Tree search & UCT** (`tests/test_tree.py`): Progressive widening, backpropagation, and state restoration.
+- **State persistence & budget guard** (`tests/test_checkpoints.py`): Checkpoint round-trip serialization, seed matching, and monotonically growing budget guards.
+- **Filesystem security** (`tests/test_files.py`): Path traversal rejection via `safe_path`, regular file validation, and atomic writes.
+- **Config validation** (`tests/test_config.py`): Rejection of placeholders, non-positive budgets, and out-of-range parameters.
+- **Runtime sandboxes** (`tests/test_sandbox.py`): Pure argument construction for Docker and Cloud Run launchers.
+- **Structural isolation** (`tests/test_isolation.py`): Verifying `DATA_STAGES` excludes literature search from accessing data files, verifying per-goal workspace and `HOME` separation, and verifying strict `trustedWorkspaces` scoping.
+- **Web client & security guard** (`web/tests/`): Client-side belief calculations matching the Python posterior arithmetic, verdict determinations, stage chain formatting, run dataset grouping, and bearer token guard/rate-limiting.
+
+Run the test suite and quality checks:
+
+```sh
+uv run pytest
+uv run ruff check && uv run ruff format --check
+uv run pyright
+cd web && bun test && bun run check
+```
 
 ## Provenance
 
@@ -175,3 +195,4 @@ The scientific engine — the MCTS search, belief analysis and prompt contracts 
 **pre-exists this application work** and is ported here, as recorded in
 [docs/provenance.md](docs/provenance.md). The standalone package, both runtimes,
 the CLI and the cloud deployment are the new work.
+

@@ -9,7 +9,34 @@
   // Agents fill `findings` and `metrics` freely, so nothing here assumes a shape.
   let found = $derived(evaluation.literature.findings.all_papers_found);
   let papers = $derived(Array.isArray(found) ? (found as Record<string, unknown>[]) : []);
-  let metrics = $derived(Object.entries(evaluation.experiment.metrics));
+  let rawMetrics = $derived(evaluation.experiment.metrics);
+  let metrics = $derived(Object.entries(rawMetrics));
+
+  interface PlotItem {
+    name: string;
+    src: string;
+  }
+
+  // Multimodal visual extraction: detect images, charts, and base64 plots in metrics or findings
+  let plots = $derived.by<PlotItem[]>(() => {
+    const list: PlotItem[] = [];
+    for (const [k, v] of metrics) {
+      if (typeof v === "string") {
+        if (v.startsWith("data:image/") || /\.(png|jpe?g|svg|webp)$/i.test(v)) {
+          list.push({ name: k.replace(/_/g, " "), src: v });
+        }
+      } else if (Array.isArray(v)) {
+        for (const item of v) {
+          if (typeof item === "string" && (item.startsWith("data:image/") || /\.(png|jpe?g|svg|webp)$/i.test(item))) {
+            list.push({ name: k.replace(/_/g, " "), src: item });
+          }
+        }
+      }
+    }
+    return list;
+  });
+
+  let selectedPlot = $state<PlotItem | null>(null);
 
   function round(value: unknown): string {
     if (typeof value === "number") {
@@ -38,6 +65,46 @@
 
   <p class="summary">{evaluation.experiment.summary}</p>
 
+  {#if plots.length > 0}
+    <div class="plots-container">
+      <h4>Experimental Plots & Visualizations</h4>
+      <div class="plots-grid">
+        {#each plots as plot}
+          <button
+            type="button"
+            class="plot-card"
+            onclick={() => (selectedPlot = plot)}
+          >
+            <img src={plot.src} alt={plot.name} class="plot-img" />
+            <figcaption class="plot-caption">{plot.name}</figcaption>
+          </button>
+        {/each}
+      </div>
+    </div>
+  {/if}
+
+  {#if selectedPlot}
+    <div
+      class="modal-backdrop"
+      role="button"
+      tabindex="0"
+      onclick={() => (selectedPlot = null)}
+      onkeydown={(e) => e.key === "Escape" && (selectedPlot = null)}
+    >
+      <div class="modal-content" role="document">
+        <button
+          type="button"
+          class="modal-close"
+          onclick={() => (selectedPlot = null)}
+        >
+          ✕ Close
+        </button>
+        <img src={selectedPlot.src} alt={selectedPlot.name} class="modal-img" />
+        <p class="modal-title">{selectedPlot.name}</p>
+      </div>
+    </div>
+  {/if}
+
   <details>
     <summary>literature · {papers.length} papers, never saw the data</summary>
     <p>{evaluation.literature.rationale}</p>
@@ -51,7 +118,7 @@
     </ul>
   </details>
 
-  <details>
+  <details open={plots.length === 0}>
     <summary>experiment · {metrics.length} metrics, wrote and ran its own analysis</summary>
     <p>{evaluation.experiment.rationale}</p>
     <dl class="metrics">
@@ -101,7 +168,93 @@
   }
   .tag.yes { border-color: var(--green); color: var(--green); }
   .tag.quiet { border-color: var(--line); color: var(--dim); }
-  .summary { margin: 18px 0 4px; color: var(--dim); font-size: 13px; line-height: 1.6; }
+  .summary { margin: 18px 0 14px; color: var(--dim); font-size: 13px; line-height: 1.6; }
+
+  .plots-container {
+    margin: 18px 0;
+    padding: 16px;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+  }
+  .plots-container h4 {
+    margin: 0 0 12px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--violet);
+    font-family: var(--mono);
+  }
+  .plots-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 14px;
+  }
+  .plot-card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 8px;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.15s ease;
+  }
+  .plot-card:hover { border-color: var(--violet); transform: translateY(-1px); }
+  .plot-img {
+    width: 100%;
+    height: 140px;
+    object-fit: cover;
+    border-radius: 3px;
+    background: #000;
+  }
+  .plot-caption {
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--dim);
+    font-family: var(--mono);
+    text-transform: capitalize;
+  }
+
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .modal-content {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 20px;
+    max-width: 90vw;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+  .modal-close {
+    align-self: flex-end;
+    background: transparent;
+    border: 0;
+    color: var(--dim);
+    cursor: pointer;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+  .modal-close:hover { color: var(--text); }
+  .modal-img {
+    max-width: 100%;
+    max-height: 70vh;
+    object-fit: contain;
+    border-radius: 4px;
+  }
+  .modal-title { margin: 0; font-size: 13px; color: var(--text); font-family: var(--mono); }
+
   details { border-top: 1px solid var(--line); }
   details summary {
     cursor: pointer;

@@ -23,11 +23,21 @@ from urithiru.runtime.files import DatasetFiles, read_json, safe_path, write_jso
 if TYPE_CHECKING:
     from urithiru.cloud.client import GoogleCloud
 
-AGENT_PROMPT = (
-    "Read goal.txt. Write results through shell/Python into the directory you start in, "
-    "at the relative path goal.txt names. Do not write results anywhere else: only that "
-    "directory is read back."
-)
+
+def agent_prompt(root: str) -> str:
+    """Name the results directory absolutely, because the agent resolves paths against HOME.
+
+    The agent starts in the workspace and reports writing "the working directory", yet the
+    file lands in its home: its file tools take the home directory as the base for a
+    relative path, whatever the shell's own working directory is. Only the absolute path
+    is unambiguous to both.
+    """
+    return (
+        f"Read {root}/goal.txt. Write every result file goal.txt names into {root}, by "
+        f"absolute path, through shell or Python. Nothing outside {root} is read back."
+    )
+
+
 # Where the agent binary lives in each environment. Docker: the operator's login volume.
 # Cloud Run: this project's own Dockerfile installs it there.
 DOCKER_AGENT = "/root/.local/bin/agy"
@@ -87,11 +97,15 @@ class Sandbox:
         self.execute(goal, workspace)
         return workspace
 
-    def agent_arguments(self, goal: Goal) -> list[str]:
-        """The agent CLI invocation itself, identical in both runtimes."""
+    def agent_arguments(self, goal: Goal, root: str) -> list[str]:
+        """The agent CLI invocation itself, identical in both runtimes.
+
+        `root` is where the workspace appears to the agent: the bind-mount destination
+        when there is a sandbox, and the workspace's own path when there is not.
+        """
         return [
             "--print",
-            AGENT_PROMPT,
+            agent_prompt(root),
             "--model",
             self.config.models.agent,
             "--effort",
@@ -163,7 +177,7 @@ class DockerSandbox(Sandbox):
             *["-v", f"{self.options.credential_volume}:/root"],
             *["-v", f"{workspace.resolve()}:{WORKSPACE}"],
             *["-w", WORKSPACE, "--entrypoint", DOCKER_AGENT, self.options.image],
-            *self.agent_arguments(goal),
+            *self.agent_arguments(goal, WORKSPACE),
         ]
 
     def remove(self, goal: Goal) -> list[str]:
@@ -231,15 +245,13 @@ class CloudSandbox(Sandbox):
         )
 
     def launch(self, goal: Goal, workspace: Path) -> list[str]:
-        agent = " ".join(shell_quote(part) for part in [CLOUD_AGENT, *self.agent_arguments(goal)])
         home = self.agent_home(goal, workspace)
+        root = WORKSPACE if self.isolated else str(workspace.resolve())
+        agent = " ".join(shell_quote(part) for part in [CLOUD_AGENT, *self.agent_arguments(goal, root)])
         if not self.isolated:
             # No bind mounts, so the agent uses the real paths and reaches the metadata
             # server for its Application Default Credentials.
-            script = (
-                self.credentials(shell_quote(str(home)))
-                + f"cd {shell_quote(str(workspace.resolve()))} && exec {agent}"
-            )
+            script = self.credentials(shell_quote(str(home))) + f"cd {shell_quote(root)} && exec {agent}"
             return ["/bin/bash", "-lc", script]
         # A sandbox withholds the metadata server, which is also where ADC comes from, so
         # this branch cannot authenticate until Cloud Run sandboxes expose a credential

@@ -252,8 +252,14 @@ class UrithiruEngine:
         if not path.exists():
             return
         data = read_json(path)
-        if data["steps"] != self.steps or data["seed"] != self.seed:
-            raise ValueError("Run budget/seed differ from the checkpoint")
+        # A budget may grow between resumes but never shrink. Completed evaluations are
+        # reloaded rather than repeated, so raising `steps` spends the extra ones on new
+        # hypotheses; lowering it would leave the checkpoint holding more finished work
+        # than the run admits to having asked for.
+        if data["seed"] != self.seed:
+            raise ValueError("Run seed differs from the checkpoint")
+        if data["steps"] > self.steps:
+            raise ValueError(f"This run requested {data['steps']} steps; a budget can only grow")
         self.tree.restore(data["nodes"])
         self.completed = [self.tree.nodes[key] for key in data["completed"]]
         self.pending = [self.tree.nodes[key] for key in data["pending"]]

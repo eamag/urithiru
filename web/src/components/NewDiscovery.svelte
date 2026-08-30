@@ -1,7 +1,15 @@
 <script lang="ts">
   import type { LaunchInput, StageMinutes } from "../lib/types";
 
-  let { onback, onlaunch }: { onback: () => void; onlaunch: (input: LaunchInput) => Promise<void> } = $props();
+  let {
+    onback,
+    onlaunch,
+    tokenRequired,
+  }: {
+    onback: () => void;
+    onlaunch: (input: LaunchInput) => Promise<void>;
+    tokenRequired: boolean;
+  } = $props();
   let data = $state<File[]>([]);
   let metadataFiles = $state<File[]>([]);
   let title = $state("");
@@ -10,6 +18,7 @@
   let seed = $state(42);
   let limits = $state(false);
   let minutes = $state<StageMinutes>({});
+  let token = $state("");
   let dragging = $state(false);
   let launching = $state(false);
   let error = $state("");
@@ -45,7 +54,7 @@
     launching = true;
     error = "";
     try {
-      await onlaunch({ data, metadataFiles, title, metadata, steps, seed, minutes });
+      await onlaunch({ data, metadataFiles, title, metadata, steps, seed, minutes, token });
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
     } finally {
@@ -134,7 +143,13 @@
             Leave a field empty to keep the profile's value.
           </p>
         {/if}
-        <p class="operator-note">Runs use the operator configuration on this machine. You can close the page after launch.</p>
+        {#if tokenRequired}
+          <label class="token">Operator token
+            <input bind:value={token} type="password" autocomplete="off" placeholder="required to start a run" />
+            <small>Held for this browser tab only. Starting a run spends the operator's Google Cloud budget, so the server asks for it.</small>
+          </label>
+        {/if}
+        <p class="operator-note">Runs use the operator configuration on the server. You can close the page after launch.</p>
       </div>
     </section>
 
@@ -180,7 +195,10 @@
   textarea { resize: vertical; line-height: 1.55; }
   .metadata-button { margin-top: 10px; border: 0; padding: 0; color: var(--violet); background: transparent; cursor: pointer; font: 11px var(--mono); }
   .budget { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-  .budget input, .minutes input { font-family: var(--mono); }
+  .budget input, .minutes input, .token input { font-family: var(--mono); }
+  .token { display: block; margin-top: 16px; }
+  .token input { width: 100%; }
+  .token small { display: block; margin-top: 6px; color: var(--faint); font-size: 10px; }
   .budget small, .minutes small { color: var(--faint); font-size: 10px; }
   .disclosure { margin-top: 16px; border: 0; padding: 0; color: var(--violet); background: transparent; cursor: pointer; font: 11px var(--mono); }
   .minutes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }

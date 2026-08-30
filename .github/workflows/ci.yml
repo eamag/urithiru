@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+    branches: ["main", "master"]
+  workflow_dispatch:
+
+jobs:
+  python-check:
+    name: Python Lint, Type Check & Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Ruff Check
+        run: uv run ruff check
+
+      - name: Ruff Format Check
+        run: uv run ruff format --check
+
+      - name: Pyright Type Check
+        run: uv run pyright
+
+      - name: Pytest
+        run: uv run pytest
+
+  web-check:
+    name: Web App Type & Astro Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install web dependencies
+        working-directory: web
+        run: bun install --frozen-lockfile
+
+      - name: Run web tests
+        working-directory: web
+        run: bun test
+
+      - name: Run astro check
+        working-directory: web
+        run: bun run check

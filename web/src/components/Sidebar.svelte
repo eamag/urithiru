@@ -6,6 +6,7 @@
     entries,
     view,
     chosen,
+    launchEnabled,
     onruns,
     onlaunch,
     onselect,
@@ -13,6 +14,7 @@
     entries: IndexEntry[];
     view: View;
     chosen: string | null;
+    launchEnabled: boolean;
     onruns: () => void;
     onlaunch: () => void;
     onselect: (id: string) => void;
@@ -33,7 +35,9 @@
     <span><b>URITHIRU</b><small>discovery engine</small></span>
   </button>
 
-  <button class="launch" type="button" onclick={onlaunch}>New discovery <span>+</span></button>
+  {#if launchEnabled}
+    <button class="launch" type="button" onclick={onlaunch}>New discovery <span>+</span></button>
+  {/if}
 
   <nav aria-label="Workspace">
     <button class:active={view === "runs"} type="button" onclick={onruns}>All discoveries <span>{entries.length}</span></button>

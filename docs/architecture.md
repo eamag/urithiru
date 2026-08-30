@@ -49,6 +49,15 @@ not see each other, and the stage costs `max(search, code)` minutes instead of t
 sum. `core/models.py` names the stages that receive data in `DATA_STAGES`; that tuple
 is the whole enforcement mechanism.
 
+### The isolation guarantee as a testable claim
+
+The system enforces a strict four-layer structural isolation guarantee, verified by `tests/test_isolation.py`:
+
+1. **Data-blind literature search**: The literature agent never sees the dataset because `DATA_STAGES = ("proposal", "code")` strictly excludes `search` and `external`. When a search goal runs, no dataset files are copied into the workspace. Data-blindness is physical and filesystem-level rather than a prompt suggestion or post-hoc timestamp audit.
+2. **Dedicated workspaces per goal**: Every single goal executes in its own isolated directory (`sandbox_artifacts/<goal-id>`), preventing concurrent or sequential stages from reading sibling workspaces.
+3. **Dedicated private `HOME` per goal**: Each goal receives a unique, dedicated `HOME` directory outside the run artifacts (`homes/<goal-id>`). Because the agent CLI maintains scratch and session state in `HOME`, isolated home roots prevent scratch-file leakage across stages and ensure retries start completely clean.
+4. **Constrained trust boundary**: The agent configuration explicitly sets `trustedWorkspaces` to include only `/workspace` and the single goal's resolved workspace path (`agent_settings(workspace)`). It never trusts the parent directory containing other goals' workspaces, preventing cross-stage file reading even on the container fallback execution path.
+
 ## Checkpoints and outputs
 
 ```text
@@ -111,11 +120,13 @@ minutes and MiB, one `<stage>_minutes` per stage; there are no timeout constants
 elsewhere.
 
 One agent CLI, two runtime boundaries. Local goals run in Docker containers. Cloud Run
-goals always get separate workspaces and homes; if the Preview launcher and a supported
-ADC credential path are available, `sandbox do` can additionally withhold the job's
-environment and metadata server. In the verified deployment the binary was absent, so
-the agent ran directly in the job container, logged `sandbox_unavailable`, and used the
-weaker boundary below.
+goals always get separate workspaces and private `HOME` directories. Cloud Run's Preview
+gVisor sandbox launcher (`/usr/local/gcp/bin/sandbox`) is unavailable in current standard
+environments (and cannot obtain Application Default Credentials when metadata access is
+withheld). The runtime plainly discloses this: when the launcher is absent, the orchestrator
+falls back to in-container isolation, emitting an explicit `sandbox_unavailable` warning
+event with `isolation="container"`. Generated code runs directly in the container, bounded
+by the job's tightly scoped service account (Storage object user and Vertex user only).
 
 ## The page
 

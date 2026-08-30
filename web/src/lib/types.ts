@@ -109,7 +109,6 @@ export interface RunEvent {
 
 export interface IndexEntry {
   id: string;
-  run: string;
   title?: string;
   status: string;
   published_at?: string;
@@ -143,10 +142,16 @@ export interface LaunchInput {
   steps: number;
   seed: number;
   minutes: StageMinutes;
+  /** Sent as a bearer token; empty reuses whatever this tab already holds. */
+  token: string;
+}
+
+/** What the deployment serving this page permits. A read-only host enables nothing. */
+export interface Capabilities {
+  launchEnabled: boolean;
 }
 
 export interface LaunchResult {
   id: string;
-  run: string;
   execution?: string;
 }

@@ -42,14 +42,14 @@ Report four separate Booleans; never substitute one for another.
 A cleanly executed refutation has execution_success=true and empirical_support=false.
 
 === TIME AND FAILURE ===
-Strict total limit of $seconds seconds. Every tool path is relative to your working directory; absolute paths are rejected.
+Strict total limit of $seconds seconds.
 If you hit an unrecoverable infrastructure failure, write `result.json` with all four Booleans false and `error_code` set (for example `API_QUOTA_EXHAUSTED`), then exit immediately. A non-empty error_code is never treated as scientific evidence: the engine discards the attempt and retries it.
 
 === OUTPUT ===
-Save `result.json` at that exact relative path in the directory you started in.
-Never write it to an absolute path, your home directory, or a temporary directory:
-the engine reads the working directory only, and a stage whose result is not there
-is discarded and retried however good the analysis was. The file must contain
+Save `result.json` under the results directory your launch instruction names, by its
+absolute path. Your home directory is not that directory, and a stage whose result is
+not in the right place is discarded and retried however good the analysis was.
+The file must contain
 EXACTLY these keys:
 {
   "execution_success": true,

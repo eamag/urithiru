@@ -37,6 +37,17 @@ def show(result: dict) -> None:
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
+def stage_minutes(proposal: int | None, search: int | None, code: int | None, external: int | None) -> dict:
+    """The stage limits the operator actually named; the profile supplies the rest."""
+    named = {
+        "proposal_minutes": proposal,
+        "search_minutes": search,
+        "code_minutes": code,
+        "external_minutes": external,
+    }
+    return {name: value for name, value in named.items() if value is not None}
+
+
 @app.command()
 def run(
     data: Annotated[
@@ -59,14 +70,8 @@ def run(
     external_minutes: Annotated[int | None, typer.Option(help="Override the profile's limit.")] = None,
 ) -> None:
     """Start a new discovery run over one or more data files."""
-    minutes = {
-        "proposal_minutes": proposal_minutes,
-        "search_minutes": search_minutes,
-        "code_minutes": code_minutes,
-        "external_minutes": external_minutes,
-    }
-    profile = Config.read(config, {name: value for name, value in minutes.items() if value is not None})
-    show(start(profile, data, metadata or [], steps, seed, output))
+    minutes = stage_minutes(proposal_minutes, search_minutes, code_minutes, external_minutes)
+    show(start(Config.read(config, minutes), data, metadata or [], steps, seed, output))
 
 
 @app.command()
@@ -76,9 +81,20 @@ def status(run: RUN) -> None:
 
 
 @app.command()
-def resume(run: RUN) -> None:
-    """Continue an interrupted run from its checkpoint, reusing completed work."""
-    show(open_run(run).resume())
+def resume(
+    run: RUN,
+    steps: Annotated[
+        int | None,
+        typer.Option(help="Raise the run's budget to this many hypotheses before continuing."),
+    ] = None,
+    proposal_minutes: Annotated[int | None, typer.Option(help="Raise the stage limit too.")] = None,
+    search_minutes: Annotated[int | None, typer.Option(help="Raise the stage limit too.")] = None,
+    code_minutes: Annotated[int | None, typer.Option(help="Raise the stage limit too.")] = None,
+    external_minutes: Annotated[int | None, typer.Option(help="Raise the stage limit too.")] = None,
+) -> None:
+    """Continue an interrupted or finished run, reusing every completed evaluation."""
+    minutes = stage_minutes(proposal_minutes, search_minutes, code_minutes, external_minutes)
+    show(open_run(run).resume(steps, minutes))
 
 
 @app.command()

@@ -2,7 +2,17 @@
   import { groupByDataset, runName, running, shortName } from "../lib/run";
   import type { IndexEntry } from "../lib/types";
 
-  let { entries, onlaunch, onselect }: { entries: IndexEntry[]; onlaunch: () => void; onselect: (id: string) => void } = $props();
+  let {
+    entries,
+    launchEnabled,
+    onlaunch,
+    onselect,
+  }: {
+    entries: IndexEntry[];
+    launchEnabled: boolean;
+    onlaunch: () => void;
+    onselect: (id: string) => void;
+  } = $props();
 
   let groups = $derived(groupByDataset(entries));
   let active = $derived(entries.filter((entry) => running(entry.status)).length);
@@ -15,7 +25,7 @@
       <h1>Discoveries</h1>
       <p>Each dataset is one discovery. Launch a new one, follow current work, and inspect every MCTS node.</p>
     </div>
-    <button type="button" onclick={onlaunch}>New discovery +</button>
+    {#if launchEnabled}<button type="button" onclick={onlaunch}>New discovery +</button>{/if}
   </header>
 
   {#if groups.length}
@@ -45,7 +55,7 @@
   {:else}
     <div class="empty">
       <p>No discoveries yet.</p>
-      <button type="button" onclick={onlaunch}>Launch the first one</button>
+      {#if launchEnabled}<button type="button" onclick={onlaunch}>Launch the first one</button>{/if}
     </div>
   {/if}
 </section>

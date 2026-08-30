@@ -40,14 +40,13 @@ reading sources. Use them rather than reinstalling.
 You have outbound network but no API credentials, and none exist to be found. Use public unauthenticated endpoints (web search, OpenAlex, Crossref) and stay within their rate limits. Never fabricate a source or claim authenticated access.
 
 === TIME ===
-Strict total limit of $seconds seconds. Every tool path is relative to your working directory; absolute paths are rejected.
+Strict total limit of $seconds seconds.
 
 === OUTPUT ===
-Save `p_search.json` at that exact relative path in the directory you started in.
-Never write it to an absolute path, your home directory, or a temporary directory:
-the engine reads the working directory only, and a stage whose result is not there
-is discarded and retried however good the analysis was. The file must contain
-EXACTLY these keys:
+Save `p_search.json` under the results directory your launch instruction names, by
+its absolute path. Your home directory is not that directory, and a stage whose
+result is not in the right place is discarded and retried however good the analysis
+was. The file must contain EXACTLY these keys:
 {
   "category_counts": {
     "definitely false": 0,

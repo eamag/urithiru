@@ -47,7 +47,24 @@ POLL_SECONDS = 5
 # configuration, because the profile names the project, bucket and service account and
 # publishing a run should not publish where it ran.
 WEB_FILES = ("mcts_state.json", "events.jsonl")
+EVENT_LOG = "events.jsonl"
 FINISHED = ("completed", "exhausted", "failed", "cancelled")
+
+
+def publish_file(source: Path, target: Path) -> None:
+    """Copy one file out, dropping the bucket reference the event log repeats on every line.
+
+    `run.json` deliberately omits the project and bucket; the event log would put them
+    back, in a directory served to anyone. The run's own id identifies it here, and the
+    operator's own copy in the bucket keeps the full reference.
+    """
+    if source.name != EVENT_LOG:
+        shutil.copyfile(source, target)
+        return
+    records = [json.loads(line) for line in source.read_text().splitlines() if line.strip()]
+    for record in records:
+        record.pop("run", None)
+    target.write_text("".join(f"{json.dumps(record, ensure_ascii=False)}\n" for record in records))
 
 
 def publish_once(source: Path, destination: Path, reference: str) -> dict:
@@ -60,12 +77,11 @@ def publish_once(source: Path, destination: Path, reference: str) -> dict:
     target.mkdir(parents=True, exist_ok=True)
     for name in WEB_FILES:
         if (source / name).exists():
-            shutil.copyfile(source / name, target / name)
+            publish_file(source / name, target / name)
     # Ordered by when the copy was made, not by the checkpoint: a run that has not
     # reached its first checkpoint has no timestamp of its own and is the one being watched.
     entry = {
         "id": identifier,
-        "run": reference,
         "status": "queued",
         "published_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "updated_at": "",
@@ -123,6 +139,24 @@ def stream_events(load: Callable[[], list[str]], follow: bool) -> Iterator[str]:
         time.sleep(POLL_SECONDS)
 
 
+def amend_budget(directory: Path, steps: int | None, minutes: dict[str, int]) -> tuple[dict, Config]:
+    """Raise a run's budget in place, so a resume continues instead of starting over.
+
+    Everything already evaluated is reloaded from the checkpoint, so added steps buy new
+    hypotheses rather than repeats and a raised stage limit applies to what is left to do.
+    The step count may only grow: lowering it would leave the checkpoint holding more
+    finished work than the run admits to having asked for.
+    """
+    record = read_json(directory / "run_config.json")
+    config = Config.from_dict(record["config"], minutes)
+    if steps is not None and steps < record["steps"]:
+        raise ValueError(f"This run requested {record['steps']} steps; a budget can only grow")
+    amended = record | {"steps": steps or record["steps"], "config": asdict(config)}
+    if amended != record:
+        write_json(directory / "run_config.json", amended)
+    return amended, config
+
+
 def evaluate(directory: Path, cloud: GoogleCloud | None) -> None:
     """The one place a discovery loop is driven, whether locally or inside Cloud Run."""
     record = read_json(directory / "run_config.json")
@@ -153,9 +187,10 @@ class LocalRun:
     def status(self) -> dict:
         return read_status(self.directory, self.reference)
 
-    def resume(self) -> dict:
+    def resume(self, steps: int | None = None, minutes: dict[str, int] | None = None) -> dict:
         with run_lock(self.directory):
             (self.directory / "cancel").unlink(missing_ok=True)
+            amend_budget(self.directory, steps, minutes or {})
         evaluate(self.directory, None)
         return self.status()
 
@@ -205,11 +240,16 @@ class CloudRun:
                 "execution": running[0].name.rsplit("/", 1)[-1] if running else None
             }
 
-    def resume(self) -> dict:
-        with self.open() as (cloud, directory, config):
+    def resume(self, steps: int | None = None, minutes: dict[str, int] | None = None) -> dict:
+        with self.open() as (cloud, directory, _config):
+            record, config = amend_budget(directory, steps, minutes or {})
+            # The orchestrator reads its budget from the bucket, and the execution's own
+            # timeout is derived from it, so the amended file goes up before the job starts.
+            cloud.upload_file(directory / "run_config.json", "run_config.json")
             return {
                 "run": self.reference,
-                "execution": submit(cloud, config, read_json(directory / "run_config.json")["steps"]),
+                "steps": record["steps"],
+                "execution": submit(cloud, config, record["steps"]),
             }
 
     def cancel(self) -> dict:

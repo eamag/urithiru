@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { cancelRun, launchRun } from "../lib/api";
+  import { cancelRun, extendRun, launchRun, loadCapabilities } from "../lib/api";
   import { loadIndex, loadRun } from "../lib/run";
   import type { IndexEntry, LaunchInput, Run, View } from "../lib/types";
   import NewDiscovery from "./NewDiscovery.svelte";
@@ -15,6 +15,8 @@
   let ready = $state(false);
   let view = $state<View>("runs");
   let chosen = $state<string | null>(null);
+  // A read-only deployment serves the same pages with no way to start or stop anything.
+  let launchEnabled = $state(false);
 
   let entry = $derived(entries.find((item) => item.id === chosen) ?? null);
   // Never pair one run's header with another's tree while a switch is in flight.
@@ -52,6 +54,7 @@
   onMount(() => {
     read();
     void refresh();
+    void loadCapabilities().then((capabilities) => (launchEnabled = capabilities.launchEnabled));
     const timer = setInterval(() => void refresh(), POLL_MS);
     const back = () => {
       read();
@@ -75,9 +78,15 @@
     select(result.id);
   }
 
+  async function extend(steps: number) {
+    if (!run) return;
+    await extendRun(run.entry.id, steps);
+    await refresh();
+  }
+
   async function cancel() {
     if (!run) return;
-    await cancelRun(run.entry.run);
+    await cancelRun(run.entry.id);
     await refresh();
   }
 </script>
@@ -87,6 +96,7 @@
     {entries}
     {view}
     {chosen}
+    {launchEnabled}
     onruns={() => apply("runs", null)}
     onlaunch={() => apply("launch", null)}
     onselect={select}
@@ -94,17 +104,17 @@
 
   <main>
     {#if view === "launch"}
-      <NewDiscovery onback={() => apply("runs", null)} onlaunch={launch} />
+      <NewDiscovery onback={() => apply("runs", null)} onlaunch={launch} tokenRequired={launchEnabled} />
     {:else if view === "run"}
       {#if run}
-        <RunWorkspace {run} onback={() => apply("runs", null)} oncancel={cancel} />
+        <RunWorkspace {run} {launchEnabled} onback={() => apply("runs", null)} oncancel={cancel} onextend={extend} />
       {:else}
         <p class="waiting">{ready && !entry ? "That run is not published here." : "Loading run…"}</p>
       {/if}
     {:else if !ready}
       <p class="waiting">Loading…</p>
     {:else}
-      <Overview {entries} onlaunch={() => apply("launch", null)} onselect={select} />
+      <Overview {entries} {launchEnabled} onlaunch={() => apply("launch", null)} onselect={select} />
     {/if}
   </main>
 </div>

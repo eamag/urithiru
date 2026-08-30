@@ -1,0 +1,8 @@
+# The console image is built from deploy/web.Dockerfile rather than the repository root
+# Dockerfile, which builds the orchestrator job. Pass the destination as _IMAGE.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-f", "deploy/web.Dockerfile", "-t", "${_IMAGE}", "."]
+images: ["${_IMAGE}"]
+options:
+  logging: CLOUD_LOGGING_ONLY

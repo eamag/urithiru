@@ -44,13 +44,12 @@ releases.
 You have outbound network but no API credentials, and none exist to be found. Use public unauthenticated endpoints (web search, OpenAlex, Crossref) and stay within their rate limits. Never fabricate a source or claim authenticated access.
 
 === TIME GUARDRAIL ===
-Strict total time limit of $seconds seconds. Every tool path is relative to your working directory;
-absolute paths are rejected.
+Strict total time limit of $seconds seconds.
 
 === OUTPUT REQUIREMENT ===
-Write the relative path `external_result.json`, in the directory you started in and
-never under an absolute path, your home directory or a temporary directory. The engine
-reads the working directory only. Use exactly this shape:
+Write `external_result.json` under the results directory your launch instruction
+names, by its absolute path. Your home directory is not that directory, and a result
+written anywhere else is discarded. Use exactly this shape:
 {
   "source": "The independent dataset URL, or none when no valid test executed.",
   "category_counts": {

@@ -2,6 +2,66 @@
 
 Deterministic checks run without models, containers or cloud resources.
 
+## 2026-08-30 — where an agent writes, and what a published copy says
+
+Three consecutive cloud runs failed at 1/3 with the same `FileNotFoundError`: a stage's
+result file was absent from the workspace the engine reads. The agents' own logs said
+where it went.
+
+- **The agent resolves relative paths against `HOME`, not its working directory.** The
+  literature agent for `search_node_000002` reported writing `p_search.json` "in the
+  working directory" and linked it at `/tmp/urithiru-agent-*/search_node_000002/` — its
+  private home — while its workspace was `/tmp/urithiru-cloud-*/sandbox_artifacts/
+  search_node_000002/`. The launch script does `cd` into the workspace, so the shell's
+  directory was right and the file tool's base was not. Every prompt then asserted
+  "absolute paths are rejected", which steered it at the one form that lands in `HOME`.
+  Naming the workspace absolutely in the launch prompt, and deleting that claim from all
+  four goal prompts, is the fix; it is a correction to the instruction, not a workaround.
+- **The fix holds.** Run `68943881` (seed 11) completed 3/3 with no `stage_failed` event
+  of any kind: three proposal, three literature, three experiment and three external
+  stages all passed on their first attempt. The three runs before it failed at 1/3.
+- **A retry now gets a clean home.** `code_node_000001` failed its first attempt and its
+  second ran a full 2m49s analysis and wrote `result.json` to the workspace. Before
+  `reset` cleared the goal's home, a second attempt resumed the failed attempt's session
+  state and returned in about 35 seconds having written nothing, so retries were never
+  second chances. This is the cloud-runtime `HOME` behaviour the 2026-08-29 section
+  listed as uncovered.
+
+Budget growth, added so a finished run can be deepened rather than repeated:
+
+- **The checkpoint guard admits growth and nothing else.** Loading a 3-step checkpoint
+  with `steps=6` succeeds; with `steps=2` it raises, and with a different seed it raises.
+- **`amend_budget` writes nothing when nothing changed**, refuses a lower step count, and
+  rejects an invalid stage limit through the existing `Config` validation (`code_minutes
+  = 0` → "Budget values must be positive").
+- **The execution timeout follows the new budget**, 19,980s at 3 steps to 56,160s at 6.
+- **Live:** run `68943881` was resumed from 3 steps to 30 and continued from its
+  checkpoint, reusing all three completed evaluations rather than re-running them.
+
+What a published copy is allowed to say, now that one is served publicly:
+
+- **No published byte names the project or the bucket.** Every file `publish` writes is
+  scanned for `gs://` and the bucket name; the event log, which carried the full run
+  reference on every line, is rewritten to drop that one field and keeps every other
+  field and every line; the index identifies a run by its id alone; the checkpoint is
+  copied verbatim. Verified over the deployed service as well: its served HTML and
+  JavaScript contain no project id, project number, bucket, `gs://`, or launch token, and
+  the built client bundle references no environment variable at all.
+- **`unpublish` removes only the copy.** The run's own files survive, other published
+  runs and their index rows are untouched, and a reference whose last segment resolves to
+  the published directory itself is refused — without that check a reference ending in
+  `/.` would have deleted every published run, which is what the test was written to
+  catch and did.
+- **Launching is refused by default.** With no `URITHIRU_LAUNCH_TOKEN` the deployment
+  answers 503 and reports `launchEnabled: false`; with one configured, an absent, wrong,
+  truncated, over-long, unprefixed or `Basic`-prefixed credential is 401 and only the
+  exact token passes; launches beyond the hourly allowance are 429. Confirmed against the
+  live service, which returned 503 before a token was configured and 401 after.
+
+Every command in the README's setup and verification sections was executed as written:
+`uv run pytest` (54 passed), `ruff check`, `ruff format --check`, `pyright` (0 errors),
+and in `web/`, `bun test` (17 passed) and `bun run check` (0 errors, 0 warnings, 0 hints).
+
 ## 2026-08-29 — the four-stage engine
 
 The refactor described in [original-logic.md](original-logic.md#later-divergence-2026-08-29)
@@ -60,8 +120,9 @@ the wheel carries all six prompt files.
 - Ruff, Ruff format and Pyright pass over the package; `astro check` passes over the
   page with 0 errors, 0 warnings and 0 hints.
 
-The stage-per-`HOME` change and the live log upload are both cloud-runtime behaviour and
-are not covered here; see the live acceptance step in [google.md](google.md).
+The live log upload is cloud-runtime behaviour and is not covered here; see the live
+acceptance step in [google.md](google.md). The stage-per-`HOME` change is covered by the
+2026-08-30 section above.
 
 ## 2026-08-28 — the original port
 

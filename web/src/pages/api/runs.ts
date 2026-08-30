@@ -37,6 +37,9 @@ const DATA_SUFFIXES = new Set([".csv", ".tsv", ".parquet", ".xlsx", ".xls"]);
 // when running locally against their own data.
 const INPUT_LIMIT = Number(process.env.URITHIRU_UPLOAD_MIB ?? 100) * 1024 * 1024;
 const STAGES = ["proposal", "search", "code", "external"] as const;
+// The same ceiling the launch form offers, so extending cannot ask for a budget that
+// starting a run never could.
+const STEP_LIMIT = 12;
 
 interface CommandResult {
   stdout: string;
@@ -131,7 +134,7 @@ export const POST: APIRoute = async ({ request }) => {
   const metadataFiles = form.getAll("metadata_file").filter((value): value is File => value instanceof File);
   const metadataText = String(form.get("metadata") ?? "").trim();
   const title = String(form.get("title") ?? "").trim();
-  const steps = Math.min(12, Math.max(1, Number(form.get("steps") ?? 1) || 1));
+  const steps = Math.min(STEP_LIMIT, Math.max(1, Number(form.get("steps") ?? 1) || 1));
   const seed = Number(form.get("seed") ?? 42) || 42;
   const total = [...data, ...metadataFiles].reduce((bytes, file) => bytes + file.size, 0) + metadataText.length;
 
@@ -198,15 +201,26 @@ export const PATCH: APIRoute = async ({ request }) => {
   if (refusal) return Response.json({ error: refusal.error }, { status: refusal.status });
   const { id, steps } = (await request.json()) as { id?: string; steps?: number };
   if (!id) return Response.json({ error: "Run ID is required." }, { status: 400 });
-  if (!steps || steps < 1) return Response.json({ error: "A positive step count is required." }, { status: 400 });
+  const wanted = Math.round(Number(steps));
+  if (!Number.isFinite(wanted) || wanted < 1 || wanted > STEP_LIMIT) {
+    return Response.json({ error: `Steps must be between 1 and ${STEP_LIMIT}.` }, { status: 400 });
+  }
 
+  // Only a run this server started can be extended. Resolving an unknown id into a path
+  // instead would hand the caller a way to point the CLI at any directory it can reach.
   const references = await readJson<Record<string, string>>(REFERENCES, {});
-  const run = references[id] ?? resolve(RUNS, id);
+  const run = references[id];
+  if (!run) return Response.json({ error: "Unknown run." }, { status: 404 });
+
+  // Extending starts another orchestrator execution, so it spends the same budget a
+  // launch does and is counted against the same allowance.
+  const throttled = overLaunchLimit();
+  if (throttled) return Response.json({ error: throttled.error }, { status: throttled.status });
 
   try {
-    const result = parseCliJson((await command(["resume", run, "--steps", String(steps)], 180_000)).stdout);
+    const result = parseCliJson((await command(["resume", run, "--steps", String(wanted)], 180_000)).stdout);
     publish(result.run);
-    return Response.json({ id, steps, execution: result.execution });
+    return Response.json({ id, steps: wanted, execution: result.execution });
   } catch (error) {
     return Response.json({ error: safeMessage(error) }, { status: 500 });
   }

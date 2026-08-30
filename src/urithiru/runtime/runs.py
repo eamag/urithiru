@@ -116,6 +116,29 @@ def publish_once(source: Path, destination: Path, reference: str) -> dict:
     return entry
 
 
+def unpublish(destination: Path, reference: str) -> dict:
+    """Take one run out of a published directory: its files, its index row, its title.
+
+    Publishing is a copy, so this removes only the copy. The run itself, in its bucket or
+    its own directory, is untouched and can be published again at any time.
+    """
+    identifier = reference.rstrip("/").rsplit("/", 1)[-1]
+    # Checked like any other untrusted name, because this one names a directory to delete.
+    # `safe_path` stops a name climbing out; a name that resolves to the directory itself
+    # stays inside and would take every published run with it, so it is refused here.
+    target = safe_path(destination, identifier)
+    if target == destination.resolve():
+        raise ValueError(f"{reference} names no run to unpublish")
+    shutil.rmtree(target, ignore_errors=True)
+    index = destination / "index.json"
+    rows = [row for row in read_json(index) if row.get("id") != identifier] if index.exists() else []
+    write_json(index, rows)
+    titles = destination / "labels.json"
+    if titles.exists():
+        write_json(titles, {key: value for key, value in read_json(titles).items() if key != identifier})
+    return {"unpublished": identifier, "published_runs": len(rows)}
+
+
 def publish_loop(refresh: Callable[[], Path], destination: Path, reference: str, watch: bool) -> dict:
     while True:
         entry = publish_once(refresh(), destination, reference)

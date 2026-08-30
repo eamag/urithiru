@@ -3,22 +3,82 @@
 A run is a Monte Carlo tree search over hypotheses. Each step can use four agent stages
 on one claim.
 
+## System Overview & Scientific Workflow
+
 ```mermaid
 flowchart TD
-    Data[CSV / TSV / Parquet / Excel + metadata] --> Engine[UrithiruEngine]
-    Engine --> Tree[MCTSTree]
-    Engine --> Selector[CandidateSelector]
-    Engine --> Agent[ResearchAgent]
-    Agent --> Proposal["proposal sandbox<br/>sees the data"]
-    Proposal -->|claims + schema| Engine
-    Engine -->|P_param| Prior[Gemini prior]
-    Agent --> Search["search sandbox<br/>never sees the data"]
-    Agent --> Code["code sandbox<br/>sees the data"]
-    Search -->|P_search| Analysis[BeliefAnalysis]
-    Code -->|P_code| Analysis
-    Analysis -->|surprising?| External["external sandbox<br/>must find other data"]
-    External -->|P_external| Engine
-    Analysis -->|reward| Tree
+    subgraph Ingestion["1. Ingestion & Proposal"]
+        Data["Tabular Data (CSV/TSV/Parquet/Excel)<br/>+ Domain Notes (Markdown)"] --> Engine["UrithiruEngine (MCTS)"]
+        Engine --> Proposal["Proposal Agent<br/>(Gemini 3.7 Flash + Data Inspection)"]
+        Proposal --> Claims["Raw Hypothesis Candidates"]
+        Claims --> Selector["CandidateSelector<br/>(text-embedding-005 Diversity + Flash Lite Dedup)"]
+        Selector --> Prior["Parametric Prior Elicitation<br/>P_param = Beta(0.5, 0.5) 30-Vote Posterior"]
+    end
+
+    subgraph SplitSandbox["2. Concurrent Structural Isolation"]
+        Prior --> Fork{"Concurrent Execution"}
+        Fork -->|Data-Blind Goal| Search["Literature Search Agent (P_search)<br/>OpenAlex / PubMed / Grounded Search<br/>*NO DATA IN WORKSPACE*"]
+        Fork -->|Data-Visible Goal| Code["Experiment Code Agent (P_code)<br/>Python / Pandas / Statsmodels / Scipy<br/>*BLIND TO LITERATURE*"]
+    end
+
+    subgraph SurprisalBlock["3. Bayesian Surprisal & Divergence"]
+        Search --> Analysis["BeliefAnalysis & Surprisal<br/>KL(P_code || P_search) in nats<br/>Normalized R_ICE Score"]
+        Code --> Analysis
+    end
+
+    subgraph ExternalBlock["4. Independent External Verification"]
+        Analysis -->|Surprising Divergence?| Check{"Is Surprising?"}
+        Check -->|Yes| External["External Verification Agent (P_external)<br/>Searches Zenodo / Dryad / Repositories<br/>Independent Holdout Replication"]
+        Check -->|No| Skip["Skip External Check<br/>(Abstain to Conserve Budget)"]
+        External --> Synthesis["Consolidated Evaluation"]
+        Skip --> Synthesis
+    end
+
+    subgraph MCTS["5. Tree Update & Persistence"]
+        Synthesis --> Backprop["Tree Backpropagation & UCT Scoring"]
+        Backprop --> Tree["MCTSTree State (mcts_state.json)"]
+        Tree --> Checkpoint["Atomic Checkpoint & Generation Precondition"]
+        Tree --> Extend{"Extend Budget?<br/>(resume --steps)"}
+    end
+```
+
+## Cloud Infrastructure & Data Flow
+
+```mermaid
+flowchart LR
+    subgraph Registry["Artifact Registry"]
+        Image["docker.pkg.dev/.../analysis:latest<br/>(Pre-baked Python + Scientific Packages)"]
+    end
+
+    subgraph CloudRunEnv["Google Cloud Run"]
+        Job["Cloud Run Job<br/>(Urithiru Orchestrator Process)"]
+        Sub1["Isolated Workspace 1<br/>(/workspace + private HOME)"]
+        Sub2["Isolated Workspace 2<br/>(/workspace + private HOME)"]
+        Job -.->|Spawns Agent Stages| Sub1
+        Job -.->|Spawns Agent Stages| Sub2
+    end
+
+    subgraph GoogleAI["Google Gemini APIs"]
+        GeminiPro["Gemini 3.7 Flash<br/>(Reasoning & Code)"]
+        GeminiLite["Gemini 3.5 Flash Lite<br/>(Candidate Dedup)"]
+        Embeddings["text-embedding-005<br/>(Candidate Diversity)"]
+    end
+
+    subgraph Storage["Google Cloud Storage"]
+        Bucket["gs://bucket/urithiru/<run-id>/<br/>├── run_config.json<br/>├── mcts_state.json<br/>├── events.jsonl<br/>├── candidate_audits.json<br/>├── inputs/<br/>├── evaluations/<br/>└── sandbox_artifacts/"]
+    end
+
+    subgraph Presentation["Delivery & Observability"]
+        CLI["Antigravity CLI / Operator Terminal<br/>(urithiru status / logs / resume / export)"]
+        Web["Interactive Visualizer (Astro + Svelte 5)<br/>(Tree View, Belief Chains, Plots & Reports)"]
+    end
+
+    Registry -->|Pulls Image| Job
+    Job <-->|LLM Reasoning & Embeddings| GoogleAI
+    Job -->|Continuous Atomic Uploads| Storage
+    Storage -->|Stream Telemetry| CLI
+    Storage -->|Read Static Snapshots| Web
+    CLI -->|Resume / Cancel Commands| Job
 ```
 
 ## Why search and code are separate

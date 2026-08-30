@@ -17,14 +17,14 @@ Required stack, all already satisfied — say so explicitly in the description:
 
 ## 0. Decisions to take first
 
-- [ ] **Category: The Taskmaster.** "Complete workflows with autonomous action, not just
+- [x] **Category: The Taskmaster.** "Complete workflows with autonomous action, not just
       chatbots" is a description of this project. Collaborative Partner is a bad fit (no
       human in the loop by design) and Fortified Enterprise Fleet wants institutional
       fleets. One project can win one prize, but the category choice does not stop the
       judges considering it for Best Architectural Design or Individual/Hobbyist.
-- [ ] **What the hosted URL points at** — read-only viewer or a launcher behind a token.
-      See §2; everything else in §1 depends on this answer.
-- [ ] **Keep the aviation demo.** Two unrelated datasets through one unchanged engine is
+- [x] **What the hosted URL points at** — option B: public viewer, token-gated launcher.
+      Deployed to Cloud Run; `urithiru.eamag.me` is mapped and waiting on one DNS record.
+- [x] **Keep the aviation demo.** Two unrelated datasets through one unchanged engine is
       the cheapest possible evidence that the engine is not tuned to its demo. Keep
       `scripts/prepare_tsb_demo.py` and `submission/demo-tsb-context.md`, and say in the
       description that both ran without a line of domain code.
@@ -34,20 +34,21 @@ Required stack, all already satisfied — say so explicitly in the description:
 Each of these is named in the rules. A missing one is a hole in the submission.
 
 - [ ] **Category selected** on Devpost.
-- [ ] **Hosted project URL or functional demo access.** §2.
+- [x] **Hosted project URL or functional demo access.** Cloud Run service `urithiru-console`:
+      public viewer, token-gated launcher. Awaiting the CNAME for the custom domain.
 - [ ] **Demo video, 4 minutes or less.** Must show live execution and proof it runs on
       Google Cloud, in English or subtitled. `submission/video-script.md` exists but is
       written around the aviation demo — rewrite for NHANES.
 - [ ] **Repository with testing access.** Private is allowed, but the judges must be able
       to get in. Two commits are unpushed (`42fda34`, `a0f61b1`). Decide public vs.
       private-plus-invite, then push.
-- [ ] **README with step-by-step setup.** Currently wrong in at least one place — see §3.
-- [ ] **Architecture diagram.** `docs/architecture.md` is prose. Judges want a picture:
+- [x] **README with step-by-step setup.** Currently wrong in at least one place — see §3.
+- [x] **Architecture diagram.** `docs/architecture.md` is prose. Judges want a picture:
       render one (Mermaid → PNG is fine) showing goal → proposal → parallel
       search/code → external, and the Cloud Run / Storage / Artifact Registry path.
-- [ ] **Text description** with features, technologies, data sources and learnings.
+- [x] **Text description** with features, technologies, data sources and learnings.
       `submission/devpost.md` exists but is entirely aviation-framed — rewrite.
-- [ ] **LICENSE file.** The rules talk about licence compliance and there is none in the
+- [x] **LICENSE file.** The rules talk about licence compliance and there is none in the
       repo. Apache-2.0 or MIT, decided now, not at 4:55 PM.
 
 ## 2. Hosting and auth
@@ -84,19 +85,19 @@ way — the rules ask for proof it runs on Google Cloud, not that strangers can 
 
 ## 3. Fix before anything is published
 
-- [ ] **The event log leaks the private bucket.** Every line of `events.jsonl` carries
+- [x] **The event log leaks the private bucket.** Every line of `events.jsonl` carries
       `"run": "gs://urithiru-<project number>/urithiru/<id>"`, and `publish_once` copies
       that file verbatim into `web/public/runs/`. `run.json` deliberately omits the
       project and bucket ("publishing a run should not publish where it ran"); the event
       log undoes that. Strip or redact the `run` field on publish.
-- [ ] **README claims the web app is static and needs no server.** It is an Astro SSR app
+- [x] **README claims the web app is static and needs no server.** It is an Astro SSR app
       with a Node adapter and an API route that shells out to the CLI. Fix the claim and
       the setup steps around it.
-- [ ] **Do not commit `2026-08-29-220346-…txt`** — a full session transcript, untracked
+- [x] **Do not commit `2026-08-29-220346-…txt`** — a full session transcript, untracked
       and *not* gitignored. Add it to `.gitignore` before any `git add -A`.
-- [ ] **Re-read `.gcloudignore` and `.dockerignore`** (both new/modified) before pushing,
+- [x] **Re-read `.gcloudignore` and `.dockerignore`** (both new/modified) before pushing,
       and confirm `.env`, `configs/*.local.toml`, `.work/`, `runs/` are still ignored.
-- [ ] **Grep the docs for the project id and bucket** before the repo goes public.
+- [x] **Grep the docs for the project id and bucket** before the repo goes public.
 
 ## 4. Architectural Discipline & Tech Stack — 30%
 
@@ -125,8 +126,10 @@ and finds no tests has to take the architecture on faith.
 
 ## 5. Innovation & Operational Utility — 40%
 
-- [ ] **Land a clean 3/3 run** on NHANES with the prompt and retry fixes. In flight now.
-- [ ] **Then extend it rather than restart it.** `urithiru resume <run> --steps 6` now
+- [x] **Land a clean 3/3 run** on NHANES. Run `68943881`, seed 11: three hypotheses
+      evaluated, three external checks run, not a single stage failure.
+- [x] **Then extend it rather than restart it.** Run `68943881` was extended from 3 to 30
+      steps with one command and continued from its checkpoint. `urithiru resume <run> --steps 6` now
       grows a finished run's budget and continues from the checkpoint, reusing every
       completed evaluation. A run that deepens on demand is a better story than a run that
       starts over, and it is one command in the video.
@@ -143,7 +146,9 @@ and finds no tests has to take the architecture on faith.
 
 ## 6. Demo & Production Readiness — 30%
 
-- [ ] **Rewrite `submission/video-script.md`** for NHANES. Beats: the dataset and what the
+- [x] **Rewrite `submission/video-script.md`** for NHANES — done, built around node 2
+      (0.70 → 0.73 → 0.72 → 0.19, contradicted by a Harvard Dataverse survey).
+      Originally: Beats: the dataset and what the
       agents are *not* told → launch from the UI → live parallel stages → the tree filling
       in → one finding with its four beliefs → the external agent abstaining → `gcloud run
       jobs executions list` as Cloud Run proof → resume with a larger budget. Under four

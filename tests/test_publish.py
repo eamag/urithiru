@@ -2,10 +2,12 @@
 
 import json
 
-from urithiru.runtime.files import read_json, write_json
-from urithiru.runtime.runs import publish_once
+import pytest
 
-REFERENCE = "gs://a-private-bucket-604410934339/urithiru/2f0c1d"
+from urithiru.runtime.files import read_json, write_json
+from urithiru.runtime.runs import publish_once, unpublish
+
+REFERENCE = "gs://a-private-bucket-000000000000/urithiru/2f0c1d"
 
 
 def stage_run(directory, status: str = "completed") -> None:
@@ -32,7 +34,7 @@ def stage_run(directory, status: str = "completed") -> None:
             "config": {
                 "models": {"agent": "gemini-3.7-flash"},
                 "budget": {"code_minutes": 10},
-                "options": {"project": "a-project", "bucket": "a-private-bucket-604410934339"},
+                "options": {"project": "a-project", "bucket": "a-private-bucket-000000000000"},
             },
         },
     )
@@ -96,3 +98,54 @@ def test_checkpoint_is_copied_unchanged(tmp_path):
     publish_once(source, destination, REFERENCE)
 
     assert read_json(destination / "2f0c1d" / "mcts_state.json") == read_json(source / "mcts_state.json")
+
+
+def test_unpublish_removes_the_copy_and_leaves_the_run(tmp_path):
+    """The published directory is a copy: taking it away must not touch the run itself."""
+    source, destination = tmp_path / "run", tmp_path / "public"
+    stage_run(source)
+    publish_once(source, destination, REFERENCE)
+    write_json(destination / "labels.json", {"2f0c1d": "A title", "other": "Keep me"})
+
+    result = unpublish(destination, REFERENCE)
+
+    assert result == {"unpublished": "2f0c1d", "published_runs": 0}
+    assert not (destination / "2f0c1d").exists()
+    assert read_json(destination / "index.json") == []
+    assert read_json(destination / "labels.json") == {"other": "Keep me"}
+    assert (source / "mcts_state.json").exists()
+    assert (source / "events.jsonl").exists()
+
+
+def test_unpublish_leaves_other_runs_alone(tmp_path):
+    """Removing one run must not disturb the rest of the index or their files."""
+    destination = tmp_path / "public"
+    for name in ("first", "second"):
+        stage_run(tmp_path / name)
+        publish_once(tmp_path / name, destination, f"gs://a-bucket/urithiru/{name}")
+
+    unpublish(destination, "gs://a-bucket/urithiru/first")
+
+    assert [row["id"] for row in read_json(destination / "index.json")] == ["second"]
+    assert (destination / "second" / "mcts_state.json").exists()
+    assert not (destination / "first").exists()
+
+
+def test_unpublish_cannot_delete_outside_the_published_directory(tmp_path):
+    """The identifier comes off a reference the caller typed, and it names what to delete."""
+    destination = tmp_path / "public"
+    destination.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("untouched")
+
+    # Only the last segment is ever used, so an embedded traversal names a sibling that
+    # does not exist rather than an escape, and a bare one is refused outright.
+    unpublish(destination, "gs://a-bucket/urithiru/../outside")
+    assert (outside / "keep.txt").exists()
+    assert not (destination / "outside").exists()
+
+    for hostile in ("gs://a-bucket/urithiru/..", "gs://a-bucket/urithiru/."):
+        with pytest.raises(ValueError):
+            unpublish(destination, hostile)
+    assert destination.exists()

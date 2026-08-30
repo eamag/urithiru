@@ -13,7 +13,7 @@ import typer
 
 from urithiru.runtime.config import Config
 from urithiru.runtime.files import DATA_SUFFIXES
-from urithiru.runtime.runs import CloudRun, open_run, start
+from urithiru.runtime.runs import CloudRun, open_run, start, unpublish
 
 app = typer.Typer(
     add_completion=False,
@@ -127,6 +127,17 @@ def publish(
 ) -> None:
     """Copy a run's checkpoint and event log where the web page can read them."""
     show(open_run(run).publish(output.resolve(), watch))
+
+
+@app.command(name="unpublish")
+def remove(
+    run: RUN,
+    output: Annotated[Path, typer.Option("--output", help="Where the web page looks for runs.")] = Path(
+        "web/public/runs"
+    ),
+) -> None:
+    """Remove a run's published copy. The run itself, and its bucket, are untouched."""
+    show(unpublish(output.resolve(), run))
 
 
 @app.command()

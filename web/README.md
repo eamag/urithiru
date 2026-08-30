@@ -1,27 +1,30 @@
 # Urithiru web
 
-Astro + Svelte frontend for launching discovery jobs and inspecting live MCTS runs.
+A static Astro + Svelte page that renders a discovery run: the search tree, the belief
+chain behind each hypothesis, and the event log as it arrives.
+
+There is no API and no server. `urithiru publish` copies the three files the page reads
+— `mcts_state.json`, `events.jsonl` and a trimmed `run.json` — into `public/runs/<id>/`,
+and the page renders the orchestrator's own output verbatim.
 
 ```bash
+# a finished run, or --watch to keep a live one up to date
+urithiru publish gs://your-bucket/urithiru/<run-id> --watch
+
 bun install
 bun run dev
 ```
 
-Without configuration, the app opens an interactive demo workspace backed by the
-real Urithiru belief and tree concepts. To connect a deployed API, copy
-`.env.example` to `.env` and set `PUBLIC_API_BASE_URL`.
+`--watch` re-copies every five seconds until the run reports finishing, so the page
+follows a live run at the same latency as `urithiru logs --follow`.
 
-The frontend expects:
+To read a run straight out of Cloud Storage instead, copy `.env.example` to `.env` and
+point `PUBLIC_RUN_BASE` at a prefix the browser can fetch. That needs the objects to be
+publicly readable and CORS-enabled on the bucket; the default keeps the bucket private.
 
-- `GET /runs` → an array of `DiscoveryRun` objects, or `{ "runs": [...] }`
-- `POST /runs` → a `DiscoveryRun`, or `{ "run": ... }`
-
-`POST /runs` is multipart form data. Dataset files repeat under `data`, followed by
-the text fields `title`, `metadata`, and `budget` (`fast`, `standard`, or `deep`).
-While an API is configured, the dashboard refreshes run state every five seconds.
-
-Production build:
+Runs are chosen with `?run=<id>`, and the page polls every three seconds.
 
 ```bash
-bun run build
+bun run check   # astro check
+bun run build   # static output in dist/
 ```

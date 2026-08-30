@@ -1,88 +1,119 @@
 <script lang="ts">
-  import { Activity, LayoutDashboard, Plus } from "lucide-svelte";
   import { onMount } from "svelte";
-  import { apiConfigured, createRun, listRuns } from "../lib/api";
-  import { createDemoRun, formatBytes, getDemoRuns } from "../lib/demo";
-  import type { DiscoveryRun, NewRunInput, View } from "../lib/types";
+  import { cancelRun, launchRun } from "../lib/api";
+  import { loadIndex, loadRun } from "../lib/run";
+  import type { IndexEntry, LaunchInput, Run, View } from "../lib/types";
   import NewDiscovery from "./NewDiscovery.svelte";
   import Overview from "./Overview.svelte";
   import RunWorkspace from "./RunWorkspace.svelte";
   import Sidebar from "./Sidebar.svelte";
 
-  let runs: DiscoveryRun[] = getDemoRuns();
-  let view: View = "overview";
-  let selectedRunId: string | null = runs[0]?.id ?? null;
+  const POLL_MS = 3000;
 
-  $: selectedRun = runs.find((run) => run.id === selectedRunId) ?? runs[0];
+  let entries = $state<IndexEntry[]>([]);
+  let loaded = $state<Run | null>(null);
+  let ready = $state(false);
+  let view = $state<View>("runs");
+  let chosen = $state<string | null>(null);
 
-  function navigate(next: View) {
-    view = next;
-    window.scrollTo({ top: 0, behavior: "smooth" });
+  let entry = $derived(entries.find((item) => item.id === chosen) ?? null);
+  // Never pair one run's header with another's tree while a switch is in flight.
+  let run = $derived(loaded && entry && loaded.entry.id === entry.id ? loaded : null);
+
+  async function refresh() {
+    entries = await loadIndex();
+    const wanted = entry;
+    if (
+      wanted &&
+      (loaded?.entry.id !== wanted.id ||
+        loaded.entry.updated_at !== wanted.updated_at ||
+        loaded.entry.published_at !== wanted.published_at)
+    ) {
+      loaded = await loadRun(wanted);
+    }
+    ready = true;
   }
 
-  function selectRun(id: string) {
-    selectedRunId = id;
-    navigate("run");
+  /** The URL is the address of a view, so a reload and the back button both land right. */
+  function apply(next: View, id: string | null) {
+    view = next;
+    chosen = id;
+    const query = next === "run" && id ? `?run=${id}` : next === "launch" ? "?view=launch" : "";
+    history.pushState({ view: next, id }, "", `${location.pathname}${query}`);
+  }
+
+  function read() {
+    const parameters = new URLSearchParams(location.search);
+    const id = parameters.get("run");
+    chosen = id;
+    view = id ? "run" : parameters.get("view") === "launch" ? "launch" : "runs";
   }
 
   onMount(() => {
-    if (!apiConfigured) return;
-    let stopped = false;
-    const refresh = async () => {
-      try {
-        const remoteRuns = await listRuns();
-        if (!stopped) runs = remoteRuns;
-      } catch (error) {
-        console.warn("Could not refresh Urithiru runs", error);
-      }
-    };
+    read();
     void refresh();
-    const timer = window.setInterval(refresh, 5_000);
+    const timer = setInterval(() => void refresh(), POLL_MS);
+    const back = () => {
+      read();
+      void refresh();
+    };
+    addEventListener("popstate", back);
     return () => {
-      stopped = true;
-      window.clearInterval(timer);
+      clearInterval(timer);
+      removeEventListener("popstate", back);
     };
   });
 
-  async function launch(input: NewRunInput) {
-    if (apiConfigured) {
-      const run = await createRun(input);
-      runs = [run, ...runs.filter((item) => item.id !== run.id)];
-      selectedRunId = run.id;
-      navigate("run");
-      return;
-    }
-    const totalBytes = input.files.reduce((total, file) => total + file.size, 0);
-    const label = input.files.length === 1 ? input.files[0].name : `${input.files[0].name} + ${input.files.length - 1} files`;
-    const run = createDemoRun(label, formatBytes(totalBytes), input.title, input.budget);
-    runs = [run, ...runs];
-    selectedRunId = run.id;
-    navigate("run");
+  function select(id: string) {
+    apply("run", id);
+    void refresh();
+  }
+
+  async function launch(input: LaunchInput) {
+    const result = await launchRun(input);
+    await refresh();
+    select(result.id);
+  }
+
+  async function cancel() {
+    if (!run) return;
+    await cancelRun(run.entry.run);
+    await refresh();
   }
 </script>
 
-<div class="app-shell">
+<div class="shell">
   <Sidebar
+    {entries}
     {view}
-    {runs}
-    {selectedRunId}
-    onnavigate={navigate}
-    onselectrun={selectRun}
+    {chosen}
+    onruns={() => apply("runs", null)}
+    onlaunch={() => apply("launch", null)}
+    onselect={select}
   />
 
-  <main class="app-main">
-    {#if view === "overview"}
-      <Overview {runs} onnew={() => navigate("new")} onselectrun={selectRun} />
-    {:else if view === "new"}
-      <NewDiscovery onback={() => navigate("overview")} onlaunch={launch} />
-    {:else if selectedRun}
-      <RunWorkspace run={selectedRun} onback={() => navigate("overview")} />
+  <main>
+    {#if view === "launch"}
+      <NewDiscovery onback={() => apply("runs", null)} onlaunch={launch} />
+    {:else if view === "run"}
+      {#if run}
+        <RunWorkspace {run} onback={() => apply("runs", null)} oncancel={cancel} />
+      {:else}
+        <p class="waiting">{ready && !entry ? "That run is not published here." : "Loading run…"}</p>
+      {/if}
+    {:else if !ready}
+      <p class="waiting">Loading…</p>
+    {:else}
+      <Overview {entries} onlaunch={() => apply("launch", null)} onselect={select} />
     {/if}
   </main>
-
-  <nav class="mobile-nav" aria-label="Mobile navigation">
-    <button type="button" class:active={view === "overview"} onclick={() => navigate("overview")}><LayoutDashboard size={18} /><span>Overview</span></button>
-    <button type="button" class="mobile-new" onclick={() => navigate("new")}><Plus size={20} /><span>New</span></button>
-    <button type="button" class:active={view === "run"} onclick={() => selectedRunId && selectRun(selectedRunId)}><Activity size={18} /><span>Workspace</span></button>
-  </nav>
 </div>
+
+<style>
+  .shell { min-height: 100vh; display: grid; grid-template-columns: 252px minmax(0, 1fr); }
+  main { min-width: 0; }
+  .waiting { margin: 0; padding: 60px 42px; color: var(--dim); font-size: 13px; }
+  @media (max-width: 860px) {
+    .shell { grid-template-columns: 1fr; }
+  }
+</style>

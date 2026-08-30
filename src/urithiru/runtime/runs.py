@@ -1,10 +1,15 @@
 """A run, local or in a bucket. Every CLI command is one call on one of these."""
 
+import json
 import os
+import shutil
 import tempfile
+import time
 import uuid
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 
 from urithiru.agents.goals import ResearchAgent
@@ -16,7 +21,7 @@ from urithiru.core.report import export
 from urithiru.runtime import events
 from urithiru.runtime.config import Config, GoogleConfig
 from urithiru.runtime.control import cancellation, run_lock
-from urithiru.runtime.files import DatasetFiles, read_json, write_json
+from urithiru.runtime.files import DatasetFiles, read_json, safe_path, write_json
 from urithiru.runtime.sandbox import CloudSandbox, DockerSandbox
 
 
@@ -34,6 +39,88 @@ def read_status(directory: Path, reference: str) -> dict:
         "updated_at": checkpoint["updated_at"],
         "cancellation_requested": (directory / "cancel").exists(),
     }
+
+
+POLL_SECONDS = 5
+# The page is a static file: it renders the orchestrator's own checkpoint and event log
+# rather than a shape assembled for it by a server. It gets `run.json` instead of the run
+# configuration, because the profile names the project, bucket and service account and
+# publishing a run should not publish where it ran.
+WEB_FILES = ("mcts_state.json", "events.jsonl")
+FINISHED = ("completed", "exhausted", "failed", "cancelled")
+
+
+def publish_once(source: Path, destination: Path, reference: str) -> dict:
+    """Copy those files under the run's own id, and describe the run in an index beside it."""
+    identifier = reference.rstrip("/").rsplit("/", 1)[-1]
+    destination.mkdir(parents=True, exist_ok=True)
+    # The identifier is the tail of a reference the caller typed, so it is checked like
+    # any other untrusted name before it becomes a directory.
+    target = safe_path(destination, identifier)
+    target.mkdir(parents=True, exist_ok=True)
+    for name in WEB_FILES:
+        if (source / name).exists():
+            shutil.copyfile(source / name, target / name)
+    # Ordered by when the copy was made, not by the checkpoint: a run that has not
+    # reached its first checkpoint has no timestamp of its own and is the one being watched.
+    entry = {
+        "id": identifier,
+        "run": reference,
+        "status": "queued",
+        "published_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "updated_at": "",
+        "dataset": [],
+    }
+    if (source / "run_config.json").exists():
+        record = read_json(source / "run_config.json")
+        write_json(
+            target / "run.json",
+            {
+                "dataset": record["dataset"],
+                "steps": record["steps"],
+                "seed": record["seed"],
+                "models": record["config"]["models"],
+                "budget": record["config"]["budget"],
+            },
+        )
+        entry["dataset"] = record["dataset"]["files"]
+    if (target / "mcts_state.json").exists():
+        checkpoint = read_json(target / "mcts_state.json")
+        entry |= {
+            "status": checkpoint["status"],
+            "completed": len(checkpoint["completed"]),
+            "requested": checkpoint["steps"],
+            "updated_at": checkpoint["updated_at"],
+            "error": checkpoint["error"],
+        }
+    index = destination / "index.json"
+    runs = {row["id"]: row for row in read_json(index)} if index.exists() else {}
+    runs[identifier] = entry
+    write_json(index, sorted(runs.values(), key=lambda row: row.get("published_at", ""), reverse=True))
+    return entry
+
+
+def publish_loop(refresh: Callable[[], Path], destination: Path, reference: str, watch: bool) -> dict:
+    while True:
+        entry = publish_once(refresh(), destination, reference)
+        if not watch or entry["status"] in FINISHED:
+            return entry
+        time.sleep(POLL_SECONDS)
+
+
+def stream_events(load: Callable[[], list[str]], follow: bool) -> Iterator[str]:
+    """Every event so far, then new ones as they arrive, stopping when the run reports done."""
+    seen = 0
+    while True:
+        lines = load()
+        for line in lines[seen:]:
+            yield line
+            if json.loads(line).get("event") == "run_finished":
+                return
+        seen = len(lines)
+        if not follow:
+            return
+        time.sleep(POLL_SECONDS)
 
 
 def evaluate(directory: Path, cloud: GoogleCloud | None) -> None:
@@ -81,6 +168,13 @@ class LocalRun:
             export(self.directory, destination)
         return {"run": self.reference, "export": str(destination)}
 
+    def logs(self, follow: bool) -> Iterator[str]:
+        path = self.directory / "events.jsonl"
+        return stream_events(lambda: path.read_text().splitlines() if path.exists() else [], follow)
+
+    def publish(self, destination: Path, watch: bool) -> dict:
+        return publish_loop(lambda: self.directory, destination, self.reference, watch)
+
 
 class CloudRun:
     """A run in a bucket, driven by a Cloud Run orchestrator; these commands only steer it."""
@@ -105,7 +199,11 @@ class CloudRun:
     def status(self) -> dict:
         with self.open() as (cloud, directory, _config):
             cloud.load_checkpoint(directory)
-            return read_status(directory, self.reference)
+            running = cloud.active(cloud.options.orchestrator_job)
+            # A checkpoint saying "running" with no live execution means the job died.
+            return read_status(directory, self.reference) | {
+                "execution": running[0].name.rsplit("/", 1)[-1] if running else None
+            }
 
     def resume(self) -> dict:
         with self.open() as (cloud, directory, config):
@@ -127,13 +225,29 @@ class CloudRun:
             export(directory, destination)
             return {"run": self.reference, "export": str(destination)}
 
+    def logs(self, follow: bool) -> Iterator[str]:
+        with self.open() as (cloud, _directory, _config):
+            yield from stream_events(lambda: cloud.read_text("events.jsonl").splitlines(), follow)
+
+    def publish(self, destination: Path, watch: bool) -> dict:
+        with self.open() as (cloud, directory, _config):
+
+            def refresh() -> Path:
+                for name in WEB_FILES:
+                    cloud.download_optional(name, directory)
+                return directory
+
+            cloud.download_optional("run_config.json", directory)
+
+            return publish_loop(refresh, destination, self.reference, watch)
+
     def orchestrate(self) -> dict:
         if "CLOUD_RUN_EXECUTION" not in os.environ:
             raise RuntimeError("Orchestrator must execute inside Cloud Run")
         with self.open() as (cloud, directory, _config):
             cloud.download_inputs(directory)
             cloud.load_checkpoint(directory)
-            events.bind(self.reference, directory)
+            events.bind(self.reference, directory, cloud.mirror_events)
             evaluate(directory, cloud)
             return read_status(directory, self.reference)
 

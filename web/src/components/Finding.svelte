@@ -1,0 +1,148 @@
+<script lang="ts">
+  import { verdict } from "../lib/run";
+  import type { CheckpointNode } from "../lib/types";
+  import Beliefs from "./Beliefs.svelte";
+
+  let { node, rank }: { node: CheckpointNode; rank: number } = $props();
+
+  let evaluation = $derived(node.evaluation!);
+  // Agents fill `findings` and `metrics` freely, so nothing here assumes a shape.
+  let found = $derived(evaluation.literature.findings.all_papers_found);
+  let papers = $derived(Array.isArray(found) ? (found as Record<string, unknown>[]) : []);
+  let metrics = $derived(Object.entries(evaluation.experiment.metrics));
+
+  function round(value: unknown): string {
+    if (typeof value === "number") {
+      if (value !== 0 && (Math.abs(value) < 1e-3 || Math.abs(value) >= 1e6)) return value.toExponential(2);
+      return String(Math.round(value * 1e4) / 1e4);
+    }
+    return value !== null && typeof value === "object" ? JSON.stringify(value) : String(value);
+  }
+</script>
+
+<article class="finding">
+  <header>
+    <span class="rank">{String(rank).padStart(2, "0")}</span>
+    <h3>{node.claim}</h3>
+  </header>
+
+  <div class="verdicts">
+    <span class="tag" class:yes={evaluation.experiment.empirical_support}>
+      {evaluation.experiment.empirical_support ? "supported by the data" : "refuted by the data"}
+    </span>
+    <span class="tag quiet">{verdict(evaluation)}</span>
+    <span class="tag quiet">reward {(evaluation.reward + evaluation.external_value).toFixed(3)}</span>
+  </div>
+
+  <Beliefs {evaluation} />
+
+  <p class="summary">{evaluation.experiment.summary}</p>
+
+  <details>
+    <summary>literature · {papers.length} papers, never saw the data</summary>
+    <p>{evaluation.literature.rationale}</p>
+    <ul class="papers">
+      {#each papers as paper}
+        <li>
+          <span>{paper.title ?? "untitled"}</span>
+          <small>{paper.journal ?? ""} {paper.year ?? ""} {paper.doi ? `· ${paper.doi}` : ""}</small>
+        </li>
+      {/each}
+    </ul>
+  </details>
+
+  <details>
+    <summary>experiment · {metrics.length} metrics, wrote and ran its own analysis</summary>
+    <p>{evaluation.experiment.rationale}</p>
+    <dl class="metrics">
+      {#each metrics as [name, value]}
+        <div><dt>{name}</dt><dd>{round(value)}</dd></div>
+      {/each}
+    </dl>
+    {#if evaluation.experiment.stdout}<pre>{evaluation.experiment.stdout}</pre>{/if}
+  </details>
+
+  <details>
+    <summary>
+      independent check · {evaluation.external ? evaluation.external.source : "did not answer"}
+    </summary>
+    {#if evaluation.external}
+      <p>{evaluation.external.rationale}</p>
+    {:else}
+      <p class="dim">{evaluation.external_error ?? "The belief did not move enough to be worth checking."}</p>
+    {/if}
+  </details>
+
+  <details>
+    <summary>divergence · how far each hop moved the belief</summary>
+    <dl class="metrics">
+      <div><dt>KL literature ‖ prior</dt><dd>{evaluation.surprisal.kl_search_param.toFixed(4)}</dd></div>
+      <div><dt>KL experiment ‖ literature</dt><dd>{evaluation.surprisal.kl_code_search.toFixed(4)}</dd></div>
+      <div><dt>KL experiment ‖ prior</dt><dd>{evaluation.surprisal.kl_code_param.toFixed(4)}</dd></div>
+      <div><dt>normalised R_ICE</dt><dd>{evaluation.surprisal.r_ice_norm.toFixed(4)}</dd></div>
+      <div><dt>belief change</dt><dd>{evaluation.surprisal.belief_change.toFixed(4)}</dd></div>
+      <div><dt>worth checking</dt><dd>{evaluation.surprisal.is_surprising ? "yes" : "no"}</dd></div>
+    </dl>
+  </details>
+</article>
+
+<style>
+  .finding { border-top: 1px solid var(--line); padding: 26px 0 6px; }
+  header { display: flex; gap: 12px; align-items: baseline; }
+  .rank { font: 400 11px var(--mono); color: var(--faint); padding-top: 3px; }
+  h3 { margin: 0; font-size: 15px; font-weight: 500; line-height: 1.5; }
+  .verdicts { display: flex; flex-wrap: wrap; gap: 7px; margin: 12px 0 20px 30px; }
+  .tag {
+    font-size: 11px;
+    padding: 2px 8px;
+    border: 1px solid var(--red);
+    border-radius: 100px;
+    color: var(--red);
+  }
+  .tag.yes { border-color: var(--green); color: var(--green); }
+  .tag.quiet { border-color: var(--line); color: var(--dim); }
+  .summary { margin: 18px 0 4px; color: var(--dim); font-size: 13px; line-height: 1.6; }
+  details { border-top: 1px solid var(--line); }
+  details summary {
+    cursor: pointer;
+    padding: 9px 0;
+    font-size: 12px;
+    color: var(--dim);
+    list-style: none;
+  }
+  details summary::-webkit-details-marker { display: none; }
+  details summary::before { content: "+ "; color: var(--faint); }
+  details[open] summary::before { content: "− "; }
+  details summary:hover { color: var(--text); }
+  details p { margin: 0 0 14px; font-size: 12.5px; line-height: 1.7; color: var(--dim); }
+  details p.dim { color: var(--faint); }
+  .papers { list-style: none; margin: 0 0 14px; padding: 0; }
+  .papers li { padding: 5px 0; border-top: 1px solid var(--line); font-size: 12px; }
+  .papers span { display: block; }
+  .papers small { color: var(--faint); font: 400 11px var(--mono); }
+  .metrics {
+    margin: 0 0 14px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 0 22px;
+  }
+  .metrics div {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 4px 0;
+    border-top: 1px solid var(--line);
+  }
+  dt { font-size: 11.5px; color: var(--dim); }
+  dd { margin: 0; font: 400 11.5px var(--mono); }
+  pre {
+    margin: 0 0 14px;
+    padding: 12px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    overflow-x: auto;
+    font: 400 11px/1.6 var(--mono);
+    color: var(--dim);
+    white-space: pre-wrap;
+  }
+</style>

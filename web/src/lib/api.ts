@@ -1,29 +1,29 @@
-import type { DiscoveryRun, NewRunInput } from "./types";
+import type { IndexEntry, LaunchInput, LaunchResult } from "./types";
 
-const API_BASE = (import.meta.env.PUBLIC_API_BASE_URL ?? "").replace(/\/$/, "");
+async function answer<T>(response: Response): Promise<T> {
+  const data = (await response.json()) as T & { error?: string };
+  if (!response.ok) throw new Error(data.error ?? `Request failed with status ${response.status}`);
+  return data;
+}
 
-export const apiConfigured = API_BASE.length > 0;
+export async function listRuns(): Promise<IndexEntry[]> {
+  return answer<IndexEntry[]>(await fetch(`/api/runs?t=${Date.now()}`, { cache: "no-store" }));
+}
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, init);
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(detail || `Urithiru API returned ${response.status}`);
+export async function launchRun(input: LaunchInput): Promise<LaunchResult> {
+  const form = new FormData();
+  for (const file of input.data) form.append("data", file);
+  for (const file of input.metadataFiles) form.append("metadata_file", file);
+  form.set("title", input.title);
+  form.set("metadata", input.metadata);
+  form.set("steps", String(input.steps));
+  form.set("seed", String(input.seed));
+  for (const [stage, value] of Object.entries(input.minutes)) {
+    if (Number.isFinite(value) && Number(value) > 0) form.set(`${stage}_minutes`, String(value));
   }
-  return response.json() as Promise<T>;
+  return answer<LaunchResult>(await fetch("/api/runs", { method: "POST", body: form }));
 }
 
-export async function listRuns(): Promise<DiscoveryRun[]> {
-  const result = await request<DiscoveryRun[] | { runs: DiscoveryRun[] }>("/runs");
-  return Array.isArray(result) ? result : result.runs;
-}
-
-export async function createRun(input: NewRunInput): Promise<DiscoveryRun> {
-  const body = new FormData();
-  input.files.forEach((file) => body.append("data", file));
-  body.append("title", input.title);
-  body.append("metadata", input.metadata);
-  body.append("budget", input.budget);
-  const result = await request<DiscoveryRun | { run: DiscoveryRun }>("/runs", { method: "POST", body });
-  return "run" in result ? result.run : result;
+export async function cancelRun(run: string): Promise<void> {
+  await answer(await fetch("/api/runs", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ run }) }));
 }

@@ -26,6 +26,13 @@ Write and execute Python against the listed files like a meticulous experimental
    4. maybe true (score 0.75)
    5. definitely true (score 1.0)
 
+=== ENVIRONMENT ===
+`python3` already has pandas, numpy, scipy, statsmodels, scikit-learn, pyarrow, openpyxl,
+xlrd, matplotlib, httpx, requests, beautifulsoup4, lxml and pypdf. Use them directly and do
+not spend your time budget reinstalling them. `pip install` works if you genuinely need
+something else. Write as many scripts and run as many experiments as the work requires;
+everything you leave in the working directory is kept as evidence.
+
 === OUTCOME CONTRACT ===
 Report four separate Booleans; never substitute one for another.
 1. execution_success: your Python completed and produced the required metrics, whether or not the claim held.
@@ -39,7 +46,11 @@ Strict total limit of $seconds seconds. Every tool path is relative to your work
 If you hit an unrecoverable infrastructure failure, write `result.json` with all four Booleans false and `error_code` set (for example `API_QUOTA_EXHAUSTED`), then exit immediately. A non-empty error_code is never treated as scientific evidence: the engine discards the attempt and retries it.
 
 === OUTPUT ===
-Save `result.json` in your working directory containing EXACTLY these keys:
+Save `result.json` at that exact relative path in the directory you started in.
+Never write it to an absolute path, your home directory, or a temporary directory:
+the engine reads the working directory only, and a stage whose result is not there
+is discarded and retried however good the analysis was. The file must contain
+EXACTLY these keys:
 {
   "execution_success": true,
   "test_spec_valid": true,

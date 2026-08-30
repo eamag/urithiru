@@ -1,128 +1,152 @@
-export type View = "overview" | "new" | "run";
-export type RunStatus = "queued" | "running" | "completed" | "failed";
-export type NodeStatus = "root" | "queued" | "running" | "supported" | "refuted" | "inconclusive";
-export type Budget = "fast" | "standard" | "deep";
-export type Verdict = "replicated" | "contradicted" | "no independent data" | "pending";
+// These mirror the files `urithiru publish` copies, field for field. The page renders the
+// orchestrator's own checkpoint and event log; nothing reshapes them on the way here.
 
-export interface Beliefs {
-  prior: number;
-  literature: number;
-  seed?: number;
-  external?: number;
+export const CATEGORIES = [
+  "definitely false",
+  "maybe false",
+  "uncertain",
+  "maybe true",
+  "definitely true",
+] as const;
+
+export type View = "runs" | "launch" | "run";
+
+export type Counts = Record<string, number>;
+
+export interface Belief {
+  counts: Counts;
+  rationale: string;
 }
 
-export interface Metric {
-  label: string;
-  value: string;
+export interface Literature {
+  category_counts: Counts;
+  rationale: string;
+  findings: Record<string, unknown>;
 }
 
-export interface EvidenceSource {
-  title: string;
-  source: string;
-  kind: "seed" | "literature" | "external";
-  note: string;
-}
-
-export interface TestSpecification {
-  question: string;
-  population: string;
-  prediction: string;
-  method: string;
-  successCriteria: string[];
-}
-
-export interface SandboxExecution {
-  id: string;
-  runtime: string;
-  image: string;
-  region: string;
-  startedAt: string;
-  duration: string;
-  exitCode?: number;
+export interface Experiment {
+  execution_success: boolean;
+  test_spec_valid: boolean;
+  direction_supported: boolean;
+  empirical_support: boolean;
+  category_counts: Counts;
+  rationale: string;
+  metrics: Record<string, unknown>;
+  p_value: number | null;
+  p_value_corrected: number | null;
   stdout: string;
   stderr: string;
+  summary: string;
 }
 
-export interface LogLine {
-  time: string;
-  level: "info" | "success" | "warning" | "error";
-  source: "orchestrator" | "verification" | "external" | "sandbox";
-  message: string;
+export interface External {
+  source: string;
+  category_counts: Counts | null;
+  rationale: string;
+  estimated_cost: number;
+  summary: string;
 }
 
-export interface NodeArtifact {
-  name: string;
-  path: string;
-  size: string;
-  kind: "code" | "json" | "log" | "prompt" | "data" | "marker";
-  stage: "proposal" | "verification" | "external" | "run";
-  savedAt: string;
-  content?: string;
-  downloadUrl?: string;
+export interface Surprisal {
+  kl_search_param: number;
+  kl_code_search: number;
+  kl_code_param: number;
+  r_ice_norm: number;
+  belief_change: number;
+  is_surprising: boolean;
 }
 
-export interface TreeNode {
+export interface Evaluation {
+  prior: Belief;
+  literature: Literature;
+  experiment: Experiment;
+  external: External | null;
+  external_error: string | null;
+  surprisal: Surprisal;
+  reward: number;
+  external_value: number;
+}
+
+export interface CheckpointNode {
   id: string;
-  parentId: string | null;
-  label: string;
+  parent_id: string | null;
   claim: string;
-  status: NodeStatus;
-  depth: number;
   visits: number;
   value: number;
-  reward?: number;
-  belief?: Beliefs;
-  verdict?: Verdict;
-  empiricalSupport?: boolean;
-  summary?: string;
-  rationale?: string;
-  metrics?: Metric[];
-  sources?: EvidenceSource[];
-  code?: string;
-  whyProposed?: string;
-  literatureRationale?: string;
-  seedRationale?: string;
-  test?: TestSpecification;
-  sandbox?: SandboxExecution;
-  logs?: LogLine[];
-  artifacts?: NodeArtifact[];
+  terminal: boolean;
+  candidates: { claim: string; duplicate_of: string | null; rejection_reason: string | null }[];
+  evaluation: Evaluation | null;
+}
+
+export interface Checkpoint {
+  steps: number;
+  seed: number;
+  status: string;
+  error: string | null;
+  nodes: CheckpointNode[];
+  completed: string[];
+  pending: string[];
+  updated_at: string;
+}
+
+export interface RunConfig {
+  dataset: { files: string[]; metadata: string };
+  steps: number;
+  seed: number;
+  models: Record<string, string>;
+  budget: Record<string, number>;
 }
 
 export interface RunEvent {
-  id: string;
-  title: string;
-  detail: string;
   time: string;
-  status: "complete" | "active" | "waiting" | "warning";
+  event: string;
+  severity: string;
+  message: string;
+  stage?: string;
+  goal?: string;
+  node?: string;
 }
 
-export interface DiscoveryRun {
+export interface IndexEntry {
   id: string;
-  name: string;
-  datasetName: string;
-  datasetSize: string;
-  rows: string;
-  columns: number;
-  startedAt: string;
-  status: RunStatus;
-  stage: string;
-  budget: Budget;
-  progress: number;
-  completeNodes: number;
-  totalNodes: number;
-  candidates: number;
-  duplicates: number;
-  verified: number;
-  currentAction: string;
-  summary: string;
-  region: string;
-  nodes: TreeNode[];
+  run: string;
+  title?: string;
+  status: string;
+  published_at?: string;
+  updated_at: string;
+  dataset: string[];
+  completed?: number;
+  requested?: number;
+  error?: string | null;
+}
+
+export interface Run {
+  entry: IndexEntry;
+  config: RunConfig | null;
+  checkpoint: Checkpoint | null;
   events: RunEvent[];
 }
 
-export interface NewRunInput {
-  files: File[];
+/** Per-stage minute overrides. An absent key keeps the operator profile's value. */
+export interface StageMinutes {
+  proposal?: number;
+  search?: number;
+  code?: number;
+  external?: number;
+}
+
+export interface LaunchInput {
+  data: File[];
+  metadataFiles: File[];
   title: string;
   metadata: string;
-  budget: Budget;
+  steps: number;
+  seed: number;
+  minutes: StageMinutes;
+}
+
+export interface LaunchResult {
+  id: string;
+  run: string;
+  execution?: string;
 }

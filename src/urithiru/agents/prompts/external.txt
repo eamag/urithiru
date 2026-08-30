@@ -15,6 +15,7 @@ Seed schema is supplied only for construct and measurement mapping.
 
 EXTERNAL TEST
 1. Search public repositories and relevant papers for observation-level data that directly measure every construct in the literal hypothesis. Search broadly before concluding that nothing independent exists; abstaining after two queries is not an answer.
+   If the seed metadata names a designated independent corpus, try that primary source first, while still verifying its independence and construct compatibility rather than assuming either.
 2. The source must be independent: not the seed record, a mirror, derived table, overlapping sample, or the same collection campaign presented elsewhere.
 3. Preserve the literal population and scope. Do not broaden a local claim, substitute a nearby construct, or invent an operational threshold to fit available data.
 4. Before execution, identify one signed primary estimand that directly decides the claim. Check units, measurement compatibility, sample size, power, missingness, confounding, outliers, and a simple baseline.
@@ -30,6 +31,15 @@ EXTERNAL TEST
 COST
 Estimate the total effort required for this verification as estimated_cost. Use a normalized scale: 0.1 for an immediately usable public dataset, 0.3 for moderate retrieval and cleaning, 0.6 for a difficult multi-source analysis, 1.0 for a task that would consume a full verification budget, and values above 1.0 when new data collection or substantial manual work would be required. Estimate the cost even when no valid test executes.
 
+=== ENVIRONMENT ===
+`python3` already has pandas, numpy, scipy, statsmodels, scikit-learn, pyarrow, openpyxl,
+xlrd, matplotlib, httpx, requests, beautifulsoup4, lxml and pypdf. Use them directly and do
+not spend your time budget reinstalling them. `pip install` works if you genuinely need
+something else. Write as many scripts and run as many experiments as the work requires;
+everything you leave in the working directory is kept as evidence.
+The image also provides `mdb-tables` and `mdb-export` for official Microsoft Access
+releases.
+
 === NETWORK ===
 You have outbound network but no API credentials, and none exist to be found. Use public unauthenticated endpoints (web search, OpenAlex, Crossref) and stay within their rate limits. Never fabricate a source or claim authenticated access.
 
@@ -38,7 +48,9 @@ Strict total time limit of $seconds seconds. Every tool path is relative to your
 absolute paths are rejected.
 
 === OUTPUT REQUIREMENT ===
-Write the relative path `external_result.json` with exactly this shape:
+Write the relative path `external_result.json`, in the directory you started in and
+never under an absolute path, your home directory or a temporary directory. The engine
+reads the working directory only. Use exactly this shape:
 {
   "source": "The independent dataset URL, or none when no valid test executed.",
   "category_counts": {

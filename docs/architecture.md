@@ -1,7 +1,7 @@
 # Architecture
 
-A run is a Monte Carlo tree search over hypotheses. Each step spends four agent
-containers on one claim.
+A run is a Monte Carlo tree search over hypotheses. Each step can use four agent stages
+on one claim.
 
 ```mermaid
 flowchart TD
@@ -21,7 +21,7 @@ flowchart TD
     Analysis -->|reward| Tree
 ```
 
-## Why search and code are separate containers
+## Why search and code are separate
 
 A belief formed from the literature is only worth measuring against a belief formed
 from the data if the two were formed independently. Earlier, one agent did both in
@@ -31,13 +31,18 @@ filesystem forensics over modification times, and the two beliefs came from the 
 agent in the same context window, so their distance partly measured one agent's
 self-consistency rather than a disagreement between sources.
 
-Now they are two sandboxes started at the same moment:
+Now they are two agent processes started at the same moment, with separate workspaces
+and private homes in every runtime:
 
 - the **search** agent's workspace contains `goal.txt` and nothing else — the dataset
   is never copied in, so data-blindness is a property of the filesystem rather than a
   promise in a prompt;
 - the **code** agent is never told what the literature concluded, so it cannot anchor
-  on it.
+  on it;
+- each agent gets its own `HOME`, because the agent CLI keeps a scratch directory
+  inside it. One home shared across a run's four stages hands every agent the previous
+  agent's working files, which is a second route to the data that copying no dataset
+  into the workspace does not close.
 
 `KL(P_code || P_search)` is therefore a disagreement between two sources that could
 not see each other, and the stage costs `max(search, code)` minutes instead of their
@@ -58,19 +63,73 @@ sandbox_artifacts/          analysis code, source captures and execution logs
 ```
 
 `mcts_state.json` says where a run got to; `events.jsonl` says what it did on the way.
-Both are checkpointed together, so in the cloud both live at the run prefix in the
-bucket and any external reader can follow a run without touching Cloud Logging.
+Both live at the run prefix in the bucket, so any external reader can follow a run
+without touching Cloud Logging. They are written on different schedules: the checkpoint
+is uploaded under a generation precondition whenever the tree changes, while the event
+log is mirrored as each line is written. A stage takes minutes, so a log that only moved
+at checkpoints would leave a reader watching nothing for most of a step.
+
+### What an agent leaves behind
+
+`sandbox_artifacts/<goal-id>/` is the agent's own working directory. Docker and the
+Preview gVisor path bind-mount it as `/workspace`; the verified Cloud Run fallback uses
+the resolved path directly. Nothing prescribes what goes in it. The agent decides how
+many scripts to write and how many experiments to run, and the retained tree is uploaded:
+
+```text
+sandbox_artifacts/code_node_000001/
+    goal.txt                      what we asked
+    agent.log                     the agent's own stdout and stderr
+    explore_columns.py            whatever it decided to write, at any depth
+    fit_baseline.py
+    check_autocorrelation.py
+    sensitivity_leave_one_site_out.py
+    figures/residuals.png
+    intermediate/cleaned.parquet
+    result.json                   the one file the harness insists on
+```
+
+The agent's interpreter is `/opt/analysis`, a scientific Python built into the image
+from `deploy/analysis-requirements.txt` and put on PATH at launch. It has pandas, numpy,
+scipy, statsmodels, scikit-learn, pyarrow, the spreadsheet readers, matplotlib and the
+HTTP/PDF/HTML parsers, so an agent starts working instead of installing.
+
+`upload_directory` sends every regular file under the workspace and excludes exactly
+three things: dot-directories (the agent's own session cache), symlinks, and the
+`inputs/` copy of the seed data, which already lives once at the run prefix. There is
+no file count limit and no naming convention — `result.json` is the only path the
+harness reads, and it exists so the run has a machine-readable verdict, not to stand
+in for the work.
+
+Note that Cloud Run's filesystem is in memory and counts against the job's memory
+limit, shared by every concurrent agent. A `code` agent writing large intermediates or
+an `external` agent downloading a big independent dataset is bounded by that, not by
+disk.
 
 Every wall-clock and size limit lives in the profile's `[budget]` section, stated in
 minutes and MiB, one `<stage>_minutes` per stage; there are no timeout constants
 elsewhere.
 
-One agent CLI, two isolations. Both runtimes launch the same binary over the same
-workspace; locally inside a Docker container, and in Cloud Run inside a `sandbox do`
-process that withholds the job's environment and the metadata server, so generated
-code cannot reach the run's service identity. Cloud Run sandboxes are a Preview
-feature: when the binary is absent the agent runs directly in the job container,
-which logs `sandbox_unavailable` and drops to the weaker boundary below.
+One agent CLI, two runtime boundaries. Local goals run in Docker containers. Cloud Run
+goals always get separate workspaces and homes; if the Preview launcher and a supported
+ADC credential path are available, `sandbox do` can additionally withhold the job's
+environment and metadata server. In the verified deployment the binary was absent, so
+the agent ran directly in the job container, logged `sandbox_unavailable`, and used the
+weaker boundary below.
+
+## The page
+
+`web/` is a static page with no server behind it. `urithiru publish` copies
+`mcts_state.json`, `events.jsonl` and a trimmed `run.json` out of a run — local or in a
+bucket — into `web/public/runs/<id>/`, and `--watch` keeps copying until the run
+finishes, so the page follows a live run without holding cloud credentials itself.
+
+It renders those files as written rather than a shape assembled for it: the tree comes
+from the checkpoint's nodes, each hypothesis's four probabilities are recomputed in the
+browser from the same category counts the engine stored, and the log is the event file
+line for line. `run.json` is the one exception, and it exists to take something away —
+the run profile names the project, bucket and service account, and publishing a run
+should not publish where it ran.
 
 ## Package layout
 
@@ -123,7 +182,7 @@ categories so they are directly comparable:
 | `kl_code_param` | what the evaluation added in total |
 | `r_ice_norm` | the share of that information which came from data rather than literature |
 | `belief_change` | the same move as a readable probability delta |
-| `is_surprising` | whether that was enough to spend a container looking for independent data |
+| `is_surprising` | whether that was enough to spend an agent turn looking for independent data |
 
 EDA is descriptive only: it must not test candidate claims or put fitted statistics in
 hypotheses. The four execution/specification/direction/support flags stay separate.
@@ -140,8 +199,9 @@ neither the job's environment nor the metadata server; without it, that identity
 reachable and the blast radius is exactly the service account's own permissions — the
 run bucket and Vertex predict. Neither mode is a hostile-tenant sandbox.
 
-No sandbox is given API credentials beyond the agent's own model key, so generated
-code has outbound network and nothing to leak. Symlinks and stray `.env` files are
-removed from a workspace after each container exits, but review artifacts before
-sharing them. Independence of a *downloaded* dataset is not something the harness can
-prove; retain and inspect its provenance.
+Docker goals receive only the operator's agent-login volume and their workspace. The
+verified Cloud Run fallback uses ADC from the job identity, so generated code can reach
+exactly the services that identity can; it is not correct to describe that process as
+credential-free. Symlinks and stray `.env` files are removed from retained workspaces,
+but review artifacts before sharing them. Independence of a *downloaded* dataset is not
+something the harness can prove; retain and inspect its provenance.

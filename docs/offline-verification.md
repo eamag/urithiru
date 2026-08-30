@@ -33,6 +33,36 @@ Two steps, five proposed claims including one exact and one near duplicate.
 Ruff and Pyright pass over the package. The wheel and source distribution build, and
 the wheel carries all six prompt files.
 
+## 2026-08-29 — the page, and the log it reads
+
+- **The page's belief arithmetic matches the engine's.** `probTrue` in
+  `web/src/lib/run.ts` was run over a completed cloud run's stored category counts and
+  compared against `Belief.prob_true` for the same records: maximum absolute difference
+  `1.1102230246251565e-16`, one unit in the last place from summation order. The page
+  re-derives the four probabilities rather than being handed them, so this is the check
+  that it derives them the same way.
+- **`publish` copies only what the page reads.** A published run directory contains
+  `mcts_state.json`, `events.jsonl` and `run.json`, and `run.json` contains the dataset,
+  steps, seed, models and budget and no `options` block — so no project, bucket or
+  service account name leaves the run.
+- **The event log is mirrored per line, and a failed mirror cannot stop a run.** With a
+  stub mirror bound, two emits produced two calls carrying one and then two lines. With a
+  mirror that raises, `emit` still returned and the line was still on disk; the failure
+  went to stderr, because reporting it through `emit` would recurse. With no mirror bound
+  — the local runtime — emits still append.
+- **The event log has one writer.** `events.jsonl` was removed from `CHECKPOINT_FILES`
+  when `mirror_events` took over uploading it; sharing an object between a
+  generation-precondition writer and an unconditional one would have failed the
+  precondition and stopped the run as if a second orchestrator had appeared.
+- **A published directory name cannot escape.** `publish` derives the directory from the
+  tail of the run reference and passes it through `safe_path`, so
+  `gs://bucket/prefix/..` is rejected rather than writing into the parent.
+- Ruff, Ruff format and Pyright pass over the package; `astro check` passes over the
+  page with 0 errors, 0 warnings and 0 hints.
+
+The stage-per-`HOME` change and the live log upload are both cloud-runtime behaviour and
+are not covered here; see the live acceptance step in [google.md](google.md).
+
 ## 2026-08-28 — the original port
 
 - Compared all 15 belief diagnostics then exported, on 32 saved research evaluations:
@@ -54,10 +84,13 @@ the wheel carries all six prompt files.
 These are deterministic comparisons, not a claim that changed runtimes or prompt
 packaging produce identical stochastic discovery trajectories.
 
-## Not verified
+## Live and remaining verification
 
-Live agent authentication, Docker image execution, cloud IAM and deployment, Gemini
-model access and a real end-to-end cloud discovery remain unverified. In particular
-the two-container split changes the wall-clock and memory profile of a step, and that
-has not been measured against a real deployment. See [local.md](local.md) and
-[google.md](google.md) for the prerequisites and the separate live acceptance step.
+The Google fallback path was exercised end to end on 2026-08-29: Cloud Run deployment,
+agent ADC authentication, Gemini access, concurrent search/code execution, per-event
+Cloud Storage mirroring and an independent external check all completed. The accepted
+run and its timing are recorded in [google.md](google.md#live-acceptance-recorded-2026-08-29).
+
+The local Docker image, Preview gVisor path, live cancellation/resume and negative IAM
+checks remain unverified. Deterministic parity still does not establish identical
+stochastic trajectories under changed prompts, models or runtimes.

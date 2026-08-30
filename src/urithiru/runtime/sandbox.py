@@ -5,7 +5,7 @@ supplies `launch`: put that command inside a Docker container, or inside a Cloud
 sandbox, and leave the agent's result files in the workspace.
 """
 
-import os
+import shutil
 import subprocess
 import tempfile
 import time
@@ -15,7 +15,7 @@ from threading import Event
 from typing import TYPE_CHECKING
 
 from urithiru.core.models import DATA_STAGES, RESULT_FILES, Dataset, Goal
-from urithiru.runtime.config import Config, DockerConfig
+from urithiru.runtime.config import Config, DockerConfig, GoogleConfig
 from urithiru.runtime.control import Cancelled
 from urithiru.runtime.events import emit
 from urithiru.runtime.files import DatasetFiles, read_json, safe_path, write_json
@@ -23,28 +23,41 @@ from urithiru.runtime.files import DatasetFiles, read_json, safe_path, write_jso
 if TYPE_CHECKING:
     from urithiru.cloud.client import GoogleCloud
 
-AGENT_PROMPT = "Read goal.txt. Write results through shell/Python in the working directory."
+AGENT_PROMPT = (
+    "Read goal.txt. Write results through shell/Python into the directory you start in, "
+    "at the relative path goal.txt names. Do not write results anywhere else: only that "
+    "directory is read back."
+)
 # Where the agent binary lives in each environment. Docker: the operator's login volume.
 # Cloud Run: this project's own Dockerfile installs it there.
 DOCKER_AGENT = "/root/.local/bin/agy"
 CLOUD_AGENT = "/usr/local/bin/agy"
 CLOUD_SANDBOX = "/usr/local/gcp/bin/sandbox"
+# The agents' preinstalled scientific Python, built by this project's Dockerfile from
+# deploy/analysis-requirements.txt. A sandbox inherits no environment, so this has to go
+# on PATH explicitly or the agent gets the bare system interpreter with no pandas.
+ANALYSIS_BIN = "/opt/analysis/bin"
 WORKSPACE = "/workspace"
-# The sandbox gets no parent environment, so the agent's home and key are mounted in.
+# The sandbox gets no parent environment, so the agent's home is mounted in.
 AGENT_HOME = "/agent-home"
-AGENT_SECRET = "/agent-secret"
+# `AGY_ADC_AUTH` makes the agent authenticate with Application Default Credentials -- in
+# Cloud Run, the job's own service account -- instead of a Gemini API key. That bills the
+# agent to Cloud Billing through Agent Platform rather than to AI Studio prepaid credits,
+# and means no key is stored, mounted, or reachable by generated code. The agent's models
+# are only served from `global`; a regional endpoint rejects them.
+AGENT_LOCATION = "global"
 
 
-def agent_settings(directory: Path) -> dict:
-    """Headless authentication needs the key *and* this provider setting; the key alone does nothing.
+def agent_settings(workspace: Path) -> dict:
+    """No `modelProvider`: that setting forces the API-key route and defeats ADC.
 
-    A workspace is `/workspace` when the sandbox bind-mounts it, and its real path when the
-    sandbox is absent, so both are trusted rather than rewriting settings per goal.
+    Only this goal's own workspace is trusted. Trusting the directory that holds every
+    goal's workspace would let the literature agent read the experiment agent's result
+    on the fallback path, where there is no bind mount and these paths are the guard.
+    A workspace is `/workspace` when the sandbox bind-mounts it and its real path when
+    the sandbox is absent, so both spellings of the one workspace are listed.
     """
-    return {
-        "modelProvider": "gemini",
-        "trustedWorkspaces": [WORKSPACE, str((directory / "sandbox_artifacts").resolve())],
-    }
+    return {"trustedWorkspaces": [WORKSPACE, str(workspace.resolve())]}
 
 
 class Sandbox:
@@ -64,6 +77,7 @@ class Sandbox:
             return workspace
         if workspace.exists():
             workspace.rename(workspace.with_name(f"{goal.id}_previous_{uuid.uuid4().hex[:8]}"))
+            self.reset(goal)
         workspace.mkdir(parents=True)
         # The literature and external agents are never given the seed files. That absence,
         # not a prompt or a timestamp check, is what makes their beliefs independent of it.
@@ -107,6 +121,9 @@ class Sandbox:
 
     def launch(self, goal: Goal, workspace: Path) -> list[str]:
         raise NotImplementedError
+
+    def reset(self, goal: Goal) -> None:
+        """Discard anything the failed attempt left outside the workspace."""
 
     def cleanup(self, goal: Goal, process, workspace: Path) -> None:
         process.wait(timeout=30)
@@ -171,40 +188,67 @@ class CloudSandbox(Sandbox):
 
     def __init__(self, cloud: "GoogleCloud", directory: Path, stop: Event):
         record = read_json(directory / "run_config.json")
-        super().__init__(Config.from_dict(record["config"]), Dataset(**record["dataset"]), directory, stop)
+        config = Config.from_dict(record["config"])
+        if not isinstance(config.options, GoogleConfig):
+            raise ValueError("Google settings required")
+        super().__init__(config, Dataset(**record["dataset"]), directory, stop)
         self.cloud = cloud
-        # Kept outside the run directory so neither is ever uploaded with the artifacts.
-        private = Path(tempfile.mkdtemp(prefix="urithiru-agent-"))
-        self.home, self.secret = private / "home", private / "secret"
-        settings = self.home / ".gemini" / "antigravity-cli"
-        settings.mkdir(parents=True)
-        write_json(settings / "settings.json", agent_settings(directory))
-        self.secret.mkdir()
-        (self.secret / "key").write_text(os.environ["GEMINI_API_KEY"])
-        (self.secret / "key").chmod(0o600)
+        self.project = config.options.project
+        # Kept outside the run directory so they are never uploaded with the artifacts.
+        self.homes = Path(tempfile.mkdtemp(prefix="urithiru-agent-"))
         self.isolated = Path(CLOUD_SANDBOX).exists()
         if not self.isolated:
             emit("sandbox_unavailable", severity="WARNING", path=CLOUD_SANDBOX, isolation="container")
 
+    def reset(self, goal: Goal) -> None:
+        """A retry gets a new home, because the agent resumes whatever it finds in the old one.
+
+        The failed attempt leaves its session state, and sometimes the result file it put in
+        the wrong place, under this goal's home. Reusing that home makes the agent believe the
+        work is already done: it returns in seconds, writes nothing to the workspace, and the
+        retry fails exactly as the first attempt did instead of being a second chance.
+        """
+        shutil.rmtree(self.homes / goal.id, ignore_errors=True)
+
+    def agent_home(self, goal: Goal, workspace: Path) -> Path:
+        """One home per goal, because the agent keeps a scratch directory inside its home.
+
+        Sharing one home hands each agent the previous agent's scratch files, which is a
+        second route to the data that copying no dataset into the workspace does not close.
+        """
+        home = self.homes / goal.id
+        settings = home / ".gemini" / "antigravity-cli"
+        settings.mkdir(parents=True, exist_ok=True)
+        write_json(settings / "settings.json", agent_settings(workspace))
+        return home
+
+    def credentials(self, home: str) -> str:
+        """The agent's whole environment: a private home, the analysis Python, and ADC."""
+        return (
+            f"export HOME={home} PATH={ANALYSIS_BIN}:$PATH AGY_ADC_AUTH=1 "
+            f"GOOGLE_CLOUD_PROJECT={shell_quote(self.project)} "
+            f"GOOGLE_CLOUD_LOCATION={AGENT_LOCATION}; "
+        )
+
     def launch(self, goal: Goal, workspace: Path) -> list[str]:
         agent = " ".join(shell_quote(part) for part in [CLOUD_AGENT, *self.agent_arguments(goal)])
+        home = self.agent_home(goal, workspace)
         if not self.isolated:
-            # No bind mounts, so the agent uses the real paths and the job's own environment,
-            # which already carries GEMINI_API_KEY from the deployment's secret reference.
+            # No bind mounts, so the agent uses the real paths and reaches the metadata
+            # server for its Application Default Credentials.
             script = (
-                f"export HOME={shell_quote(str(self.home))}; "
-                f"cd {shell_quote(str(workspace.resolve()))} && exec {agent}"
+                self.credentials(shell_quote(str(home)))
+                + f"cd {shell_quote(str(workspace.resolve()))} && exec {agent}"
             )
             return ["/bin/bash", "-lc", script]
-        script = (
-            f'export HOME={AGENT_HOME} GEMINI_API_KEY="$(cat {AGENT_SECRET}/key)"; '
-            f"cd {WORKSPACE} && exec {agent}"
-        )
+        # A sandbox withholds the metadata server, which is also where ADC comes from, so
+        # this branch cannot authenticate until Cloud Run sandboxes expose a credential
+        # path. See docs/google.md; the run falls back to the branch above meanwhile.
+        script = self.credentials(AGENT_HOME) + f"cd {WORKSPACE} && exec {agent}"
         return [
             *[CLOUD_SANDBOX, "do", "--allow-egress", "--write"],
             *["--mount", f"type=bind,source={workspace.resolve()},destination={WORKSPACE}"],
-            *["--mount", f"type=bind,source={self.home},destination={AGENT_HOME}"],
-            *["--mount", f"type=bind,source={self.secret},destination={AGENT_SECRET}"],
+            *["--mount", f"type=bind,source={home},destination={AGENT_HOME}"],
             *["--", "/bin/bash", "-lc", script],
         ]
 

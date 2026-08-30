@@ -12,18 +12,18 @@ spec:
           serviceAccountName: ${SERVICE_ACCOUNT}
           maxRetries: 0
           timeoutSeconds: 86400
-          # Generated code runs in a Cloud Run sandbox launched from inside this container.
-          sandboxLauncher: gvisor
+          # Cloud Run sandboxes are a Preview feature. Until the project is allowlisted the
+          # API rejects this field outright, so it ships commented out: uncomment it once
+          # `sandboxLauncher` is accepted in your region and the orchestrator will isolate
+          # every agent in gVisor. Without it the run still completes, logging
+          # `sandbox_unavailable` with `isolation=container` -- see docs/google.md.
+          # sandboxLauncher: gvisor
           containers:
             - image: ${IMAGE_URI}
               # Every execution overrides these; the defaults must never do useful work.
               args: ["orchestrate", "--run", "OVERRIDDEN-AT-SUBMIT"]
-              env:
-                - name: GEMINI_API_KEY
-                  valueFrom:
-                    secretKeyRef:
-                      key: latest
-                      name: urithiru-gemini-api-key
+              # No agent credential is passed in. The agent authenticates with this
+              # job's own Application Default Credentials, so nothing to store or leak.
               resources:
                 limits:
                   # The orchestrator hosts every agent. A step runs its search and code

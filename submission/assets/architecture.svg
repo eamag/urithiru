@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">Urithiru Google Cloud architecture</title>
+  <desc id="desc">A Cloud Run job coordinates four aviation safety agents with separated workspaces, stores checkpoints and live events in Cloud Storage, and verifies Canadian signals against U.S. NTSB data.</desc>
+  <defs>
+    <style>
+      .bg { fill: #0b0c0b; }
+      .panel { fill: #111311; stroke: #30342f; stroke-width: 2; }
+      .soft { fill: #151715; stroke: #3a3e39; stroke-width: 2; }
+      .violet { fill: #17141d; stroke: #9c7bd8; stroke-width: 2; }
+      .green { fill: #101815; stroke: #66bd91; stroke-width: 2; }
+      .text { fill: #e6e8e5; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+      .dim { fill: #9da39d; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+      .mono { fill: #b8beb8; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .line { fill: none; stroke: #636963; stroke-width: 2; marker-end: url(#arrow); }
+      .split { fill: none; stroke: #9c7bd8; stroke-width: 2; marker-end: url(#arrow-violet); }
+      .dash { fill: none; stroke: #555b55; stroke-width: 2; stroke-dasharray: 7 8; marker-end: url(#arrow); }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#636963"/></marker>
+    <marker id="arrow-violet" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#9c7bd8"/></marker>
+  </defs>
+  <rect class="bg" width="1600" height="900"/>
+
+  <text class="text" x="100" y="92" font-size="38" font-weight="600" letter-spacing="3">URITHIRU</text>
+  <text class="dim" x="100" y="127" font-size="19">Canadian aviation safety signals, independently checked in U.S. records</text>
+
+  <rect class="soft" x="100" y="196" width="250" height="116" rx="14"/>
+  <text class="text" x="225" y="240" text-anchor="middle" font-size="22" font-weight="600">Operator CLI</text>
+  <text class="mono" x="225" y="273" text-anchor="middle" font-size="15">5 Canadian TSB tables</text>
+
+  <rect class="panel" x="444" y="168" width="712" height="612" rx="20"/>
+  <text class="text" x="480" y="215" font-size="24" font-weight="600">Cloud Run Job</text>
+  <text class="dim" x="480" y="244" font-size="16">one orchestrator · one private HOME and workspace per goal</text>
+
+  <rect class="soft" x="512" y="286" width="576" height="82" rx="12"/>
+  <text class="text" x="800" y="320" text-anchor="middle" font-size="20" font-weight="600">Proposal agent</text>
+  <text class="dim" x="800" y="346" text-anchor="middle" font-size="15">inspects the uploaded data · proposes falsifiable claims</text>
+
+  <rect class="violet" x="512" y="446" width="252" height="126" rx="12"/>
+  <text class="text" x="638" y="484" text-anchor="middle" font-size="20" font-weight="600">Literature agent</text>
+  <text class="dim" x="638" y="514" text-anchor="middle" font-size="15">published evidence only</text>
+  <text class="mono" x="638" y="542" text-anchor="middle" font-size="14">dataset absent</text>
+
+  <rect class="green" x="836" y="446" width="252" height="126" rx="12"/>
+  <text class="text" x="962" y="484" text-anchor="middle" font-size="20" font-weight="600">Experiment agent</text>
+  <text class="dim" x="962" y="514" text-anchor="middle" font-size="15">writes and runs Python</text>
+  <text class="mono" x="962" y="542" text-anchor="middle" font-size="14">literature answer absent</text>
+
+  <rect class="soft" x="674" y="646" width="252" height="92" rx="12"/>
+  <text class="text" x="800" y="681" text-anchor="middle" font-size="20" font-weight="600">U.S. NTSB check</text>
+  <text class="dim" x="800" y="710" text-anchor="middle" font-size="15">tries to falsify across the border</text>
+
+  <rect class="soft" x="1250" y="196" width="250" height="116" rx="14"/>
+  <text class="text" x="1375" y="240" text-anchor="middle" font-size="22" font-weight="600">Gemini</text>
+  <text class="mono" x="1375" y="270" text-anchor="middle" font-size="14">3.7 Flash · 3.5 Flash Lite</text>
+  <text class="dim" x="1375" y="294" text-anchor="middle" font-size="14">ADC · no API-key secret</text>
+
+  <rect class="soft" x="1250" y="430" width="250" height="174" rx="14"/>
+  <text class="text" x="1375" y="472" text-anchor="middle" font-size="22" font-weight="600">Cloud Storage</text>
+  <text class="mono" x="1375" y="508" text-anchor="middle" font-size="14">mcts_state.json</text>
+  <text class="mono" x="1375" y="534" text-anchor="middle" font-size="14">events.jsonl · live</text>
+  <text class="mono" x="1375" y="560" text-anchor="middle" font-size="14">code · sources · metrics</text>
+  <text class="dim" x="1375" y="586" text-anchor="middle" font-size="14">plain files are the run state</text>
+
+  <path class="line" d="M 350 254 H 444"/>
+  <path class="line" d="M 1156 254 H 1250"/>
+  <path class="line" d="M 1088 509 H 1250"/>
+  <path class="line" d="M 800 368 V 408 H 638 V 446"/>
+  <path class="line" d="M 800 408 H 962 V 446"/>
+  <path class="split" d="M 638 572 V 608 H 800 V 646"/>
+  <path class="split" d="M 962 572 V 608 H 800"/>
+  <path class="dash" d="M 1250 517 H 1156"/>
+
+  <text class="mono" x="800" y="420" text-anchor="middle" font-size="14">parallel · cannot see each other</text>
+  <text class="dim" x="100" y="833" font-size="16">Outputs are observational safety signals, not causes. Every stage retains its code, sources, metrics and event history.</text>
+</svg>

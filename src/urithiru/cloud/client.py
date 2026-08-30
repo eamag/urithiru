@@ -12,9 +12,11 @@ from google.protobuf.duration_pb2 import Duration
 from urithiru.runtime.config import GoogleConfig
 from urithiru.runtime.files import file_hash, read_json, safe_path
 
+# The event log has one writer and its own upload path, so it is not a checkpoint file:
+# `mirror_events` publishes it as each line is written rather than once a stage lands.
+EVENT_LOG = "events.jsonl"
 CHECKPOINT_FILES = (
     "mcts_state.json",
-    "events.jsonl",
     "candidate_audits.json",
     "artifacts/embeddings.json",
     "artifacts/dedupe_llm_decisions.json",
@@ -63,6 +65,26 @@ class GoogleCloud:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)
 
+    def mirror_events(self, path: Path) -> None:
+        """Publish the event log as it grows. Append-only and single-writer, so no
+        generation precondition: ownership is already enforced by the checkpoint."""
+        self.bucket.blob(f"{self.prefix}/{EVENT_LOG}").upload_from_filename(str(path), timeout=30)
+
+    def download_optional(self, name: str, directory: Path) -> bool:
+        """A run that has not reached its first checkpoint is missing files, not broken."""
+        try:
+            self.download_file(name, directory)
+        except NotFound:
+            return False
+        return True
+
+    def read_text(self, name: str) -> str:
+        """The object's current contents, or empty when it does not exist yet."""
+        try:
+            return self.bucket.blob(f"{self.prefix}/{name}").download_as_text(timeout=60)
+        except NotFound:
+            return ""
+
     def save_checkpoint(self, directory: Path) -> None:
         """Upload only what changed, and only if nobody else has written it since we did."""
         for name in CHECKPOINT_FILES:
@@ -98,7 +120,7 @@ class GoogleCloud:
         return blob.generation
 
     def load_checkpoint(self, directory: Path) -> None:
-        for name in CHECKPOINT_FILES:
+        for name in (EVENT_LOG, *CHECKPOINT_FILES):
             try:
                 self.download_file(name, directory)
             except NotFound:

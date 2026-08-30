@@ -1,9 +1,12 @@
+# Cloud Build only needs what the Dockerfile copies.
 *
+!Dockerfile
 !pyproject.toml
 !uv.lock
 !README.md
 !src/
 !src/**
+!deploy/
 !deploy/analysis-requirements.txt
-**/__pycache__
+**/__pycache__/**
 **/*.pyc

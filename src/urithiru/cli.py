@@ -88,6 +88,32 @@ def cancel(run: RUN) -> None:
 
 
 @app.command()
+def logs(
+    run: RUN,
+    follow: Annotated[
+        bool, typer.Option("--follow", "-f", help="Keep printing until the run reports finishing.")
+    ] = False,
+) -> None:
+    """Print the run's event log: the same lines the orchestrator wrote, in order."""
+    for line in open_run(run).logs(follow):
+        print(line, flush=True)
+
+
+@app.command()
+def publish(
+    run: RUN,
+    output: Annotated[Path, typer.Option("--output", help="Where the web page looks for runs.")] = Path(
+        "web/public/runs"
+    ),
+    watch: Annotated[
+        bool, typer.Option("--watch", help="Keep publishing every few seconds until the run finishes.")
+    ] = False,
+) -> None:
+    """Copy a run's checkpoint and event log where the web page can read them."""
+    show(open_run(run).publish(output.resolve(), watch))
+
+
+@app.command()
 def export(run: RUN, output: DESTINATION) -> None:
     """Copy a run to a new directory and write the ranked report.json and report.md."""
     show(open_run(run).export(output.resolve()))

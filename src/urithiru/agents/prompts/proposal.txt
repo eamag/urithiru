@@ -40,6 +40,13 @@ $evidence
    - What non-obvious mechanisms or conditional regime switches explain behavior standard models miss?
 4. Discovery is open-ended: each hypothesis must be a short, clear, falsifiable declarative claim. The downstream verification agent decides how to test it.
 
+=== ENVIRONMENT ===
+`python3` already has pandas, numpy, scipy, statsmodels, scikit-learn, pyarrow, openpyxl,
+xlrd, matplotlib, httpx, requests, beautifulsoup4, lxml and pypdf. Use them directly and do
+not spend your time budget reinstalling them. `pip install` works if you genuinely need
+something else. Write as many scripts and run as many experiments as the work requires;
+everything you leave in the working directory is kept as evidence.
+
 === SAFETY GUARDRAILS ===
 1. Time Limit: $seconds seconds.
 2. Every tool path is relative to your working directory. Absolute paths are rejected.
@@ -47,7 +54,10 @@ $evidence
    proposal produced without executing code is rejected, including when the stop rule applies.
 
 === OUTPUT REQUIREMENT ===
-Save the final structured JSON result to the relative path `eda_proposal.json` containing EXACTLY these keys and no others:
+Save the final structured JSON result to the relative path `eda_proposal.json`, in the
+directory you started in and never under an absolute path, your home directory or a
+temporary directory. The engine reads the working directory only. It must contain
+EXACTLY these keys and no others:
 {
   "hypotheses": [
     {"hypothesis": "A short falsifiable declarative claim."}

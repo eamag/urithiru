@@ -32,6 +32,10 @@ n_true = 30 * sum(counts[c] * SCORE[c] for c in counts) / sum(counts.values())
 p_search = (0.5 + n_true) / (0.5 + 0.5 + 30)
 ```
 
+=== ENVIRONMENT ===
+`python3` already has httpx, requests, beautifulsoup4, lxml and pypdf for fetching and
+reading sources. Use them rather than reinstalling.
+
 === NETWORK ===
 You have outbound network but no API credentials, and none exist to be found. Use public unauthenticated endpoints (web search, OpenAlex, Crossref) and stay within their rate limits. Never fabricate a source or claim authenticated access.
 
@@ -39,7 +43,11 @@ You have outbound network but no API credentials, and none exist to be found. Us
 Strict total limit of $seconds seconds. Every tool path is relative to your working directory; absolute paths are rejected.
 
 === OUTPUT ===
-Save `p_search.json` in your working directory containing EXACTLY these keys:
+Save `p_search.json` at that exact relative path in the directory you started in.
+Never write it to an absolute path, your home directory, or a temporary directory:
+the engine reads the working directory only, and a stage whose result is not there
+is discarded and retried however good the analysis was. The file must contain
+EXACTLY these keys:
 {
   "category_counts": {
     "definitely false": 0,

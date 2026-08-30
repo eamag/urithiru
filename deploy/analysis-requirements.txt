@@ -1,0 +1,24 @@
+# The scientific Python the agents get inside their sandbox.
+#
+# Installed at image build time into /opt/analysis and put on PATH when an agent is
+# launched, so an agent never spends its time budget on pip. Add what you want your
+# agents to have; rebuild the image to apply. An agent can still pip install into this
+# environment at run time, it just costs it turns.
+
+pandas>=2.2,<4
+numpy>=2,<3
+scipy>=1.14,<2
+statsmodels>=0.14,<1
+scikit-learn>=1.5,<2
+
+pyarrow>=17,<23
+openpyxl>=3.1,<4
+xlrd>=2,<3
+
+matplotlib>=3.9,<4
+
+httpx>=0.28,<1
+requests>=2.32,<3
+beautifulsoup4>=4.12,<5
+lxml>=5,<7
+pypdf>=6,<7

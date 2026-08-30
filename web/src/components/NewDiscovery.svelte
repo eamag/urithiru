@@ -1,195 +1,194 @@
 <script lang="ts">
-  import {
-    ArrowLeft,
-    ArrowRight,
-    Check,
-    FileSpreadsheet,
-    Files,
-    FlaskConical,
-    Info,
-    ShieldCheck,
-    Sparkles,
-    UploadCloud,
-    X,
-    Zap,
-  } from "lucide-svelte";
-  import { formatBytes } from "../lib/demo";
-  import type { Budget, NewRunInput } from "../lib/types";
+  import type { LaunchInput, StageMinutes } from "../lib/types";
 
-  export let onback: () => void;
-  export let onlaunch: (input: NewRunInput) => void | Promise<void>;
+  let { onback, onlaunch }: { onback: () => void; onlaunch: (input: LaunchInput) => Promise<void> } = $props();
+  let data = $state<File[]>([]);
+  let metadataFiles = $state<File[]>([]);
+  let title = $state("");
+  let metadata = $state("");
+  let steps = $state(3);
+  let seed = $state(42);
+  let limits = $state(false);
+  let minutes = $state<StageMinutes>({});
+  let dragging = $state(false);
+  let launching = $state(false);
+  let error = $state("");
+  let dataInput: HTMLInputElement;
+  let metadataInput: HTMLInputElement;
 
-  let files: File[] = [];
-  let title = "";
-  let metadata = "";
-  let budget: Budget = "standard";
-  let dragging = false;
-  let launching = false;
-  let launchError = "";
-  let fileInput: HTMLInputElement;
+  const allowed = new Set(["csv", "tsv", "parquet", "xlsx", "xls"]);
+  const STAGES: { key: keyof StageMinutes; label: string }[] = [
+    { key: "proposal", label: "Proposal" },
+    { key: "search", label: "Literature" },
+    { key: "code", label: "Experiment" },
+    { key: "external", label: "External" },
+  ];
+  let bytes = $derived([...data, ...metadataFiles].reduce((total, file) => total + file.size, 0));
 
-  const supportedExtensions = ["csv", "tsv", "parquet", "xlsx", "xls"];
-
-  function addFiles(incoming: File[]) {
-    const accepted = incoming.filter((file) => supportedExtensions.includes(file.name.split(".").pop()?.toLowerCase() ?? ""));
-    const known = new Set(files.map((file) => `${file.name}:${file.size}`));
-    files = [...files, ...accepted.filter((file) => !known.has(`${file.name}:${file.size}`))];
+  function formatBytes(value: number): string {
+    if (value < 1024 * 1024) return `${Math.max(1, Math.round(value / 1024))} KiB`;
+    return `${(value / 1024 / 1024).toFixed(2)} MiB`;
   }
 
-  function handleDrop(event: DragEvent) {
-    event.preventDefault();
-    dragging = false;
-    addFiles(Array.from(event.dataTransfer?.files ?? []));
+  function addData(files: File[]) {
+    const known = new Set(data.map((file) => `${file.name}:${file.size}`));
+    data = [...data, ...files.filter((file) => allowed.has(file.name.split(".").at(-1)?.toLowerCase() ?? "") && !known.has(`${file.name}:${file.size}`))];
   }
 
-  function handleInput(event: Event) {
-    addFiles(Array.from((event.currentTarget as HTMLInputElement).files ?? []));
+  function addMetadata(files: File[]) {
+    const known = new Set(metadataFiles.map((file) => `${file.name}:${file.size}`));
+    metadataFiles = [...metadataFiles, ...files.filter((file) => !known.has(`${file.name}:${file.size}`))];
   }
 
-  function removeFile(index: number) {
-    files = files.filter((_, position) => position !== index);
-  }
-
-  async function launch() {
-    if (!files.length) return;
+  async function submit() {
+    if (!data.length || bytes > 100 * 1024 * 1024) return;
     launching = true;
-    launchError = "";
+    error = "";
     try {
-      await onlaunch({ files, title, metadata, budget });
-    } catch (error) {
-      launchError = error instanceof Error ? error.message : "The discovery could not be launched.";
+      await onlaunch({ data, metadataFiles, title, metadata, steps, seed, minutes });
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
     } finally {
       launching = false;
     }
   }
 </script>
 
-<section class="page new-page">
-  <header class="new-page-header">
-    <button type="button" class="back-button" onclick={onback}><ArrowLeft size={17} /> Overview</button>
-    <div class="eyebrow"><span class="eyebrow-dot"></span> NEW DISCOVERY</div>
-    <h1>What should we investigate?</h1>
-    <p>Upload a dataset and enough context to help Urithiru form useful, falsifiable hypotheses.</p>
+<section class="launch-page">
+  <header>
+    <button type="button" class="back" onclick={onback}>← All runs</button>
+    <p class="eyebrow">NEW DISCOVERY</p>
+    <h1>Launch a real run</h1>
+    <p class="intro">Upload related tables and context. The operator stages them, starts the configured runtime, and keeps publishing progress here.</p>
   </header>
 
-  <form class="discovery-form" onsubmit={(event) => { event.preventDefault(); launch(); }}>
+  <form onsubmit={(event) => { event.preventDefault(); void submit(); }}>
     <section class="form-section">
-      <div class="form-section-number">01</div>
-      <div class="form-section-body">
-        <div class="form-heading">
-          <div><h2>Dataset</h2><p>One dataset can include multiple related files.</p></div>
-          <span class="required-label">Required</span>
-        </div>
-
+      <div class="number">01</div>
+      <div>
+        <div class="section-heading"><span><h2>Data files</h2><p>CSV, TSV, Parquet, XLSX, or XLS. Related tables stay separate.</p></span><b>required</b></div>
         <button
-          type="button"
           class:dragging
-          class:has-files={files.length > 0}
-          class="upload-dropzone"
-          onclick={() => fileInput.click()}
+          class="dropzone"
+          type="button"
+          onclick={() => dataInput.click()}
           ondragover={(event) => { event.preventDefault(); dragging = true; }}
           ondragleave={() => dragging = false}
-          ondrop={handleDrop}
+          ondrop={(event) => { event.preventDefault(); dragging = false; addData(Array.from(event.dataTransfer?.files ?? [])); }}
         >
-          <input
-            bind:this={fileInput}
-            type="file"
-            multiple
-            accept=".csv,.tsv,.parquet,.xlsx,.xls"
-            onchange={handleInput}
-          />
-          <span class="upload-icon"><UploadCloud size={25} strokeWidth={1.6} /></span>
-          <strong>Drop your dataset here</strong>
-          <span>or <u>choose files</u> from your computer</span>
-          <small>CSV, TSV, Parquet, or Excel · up to 100 MB</small>
+          <input bind:this={dataInput} type="file" multiple accept=".csv,.tsv,.parquet,.xlsx,.xls" onchange={(event) => addData(Array.from(event.currentTarget.files ?? []))} />
+          <span class="plus">+</span><strong>Choose files or drop them here</strong><small>Complete upload limit: 100 MiB</small>
         </button>
-
-        {#if files.length}
-          <div class="uploaded-files">
-            {#each files as file, index}
-              <div class="uploaded-file">
-                <span class="file-type-icon"><FileSpreadsheet size={18} strokeWidth={1.8} /></span>
-                <span class="file-copy"><strong>{file.name}</strong><small>{formatBytes(file.size)} · Ready to upload</small></span>
-                <span class="file-ready"><Check size={13} strokeWidth={2.4} /> Ready</span>
-                <button type="button" aria-label={`Remove ${file.name}`} onclick={() => removeFile(index)}><X size={16} /></button>
-              </div>
+        {#if data.length}
+          <ul class="files">
+            {#each data as file, index}
+              <li><span><b>{file.name}</b><small>{formatBytes(file.size)}</small></span><button type="button" aria-label={`Remove ${file.name}`} onclick={() => data = data.filter((_, position) => position !== index)}>×</button></li>
             {/each}
-          </div>
+          </ul>
+          <p class:error={bytes > 100 * 1024 * 1024} class="total">{data.length} data file{data.length === 1 ? "" : "s"} · {formatBytes(bytes)} total</p>
         {/if}
       </div>
     </section>
 
     <section class="form-section">
-      <div class="form-section-number">02</div>
-      <div class="form-section-body">
-        <div class="form-heading">
-          <div><h2>Research context</h2><p>Help the agents interpret columns and avoid invalid assumptions.</p></div>
-          <span class="optional-label">Recommended</span>
-        </div>
-
-        <label class="field-label" for="run-title">Discovery name <span>Optional</span></label>
-        <input id="run-title" class="text-field" bind:value={title} placeholder="e.g. Urban particulate signatures" maxlength="80" />
-
-        <label class="field-label metadata-label" for="metadata">About this dataset <span>Optional</span></label>
-        <textarea
-          id="metadata"
-          class="text-area"
-          bind:value={metadata}
-          placeholder="Describe what was measured, the population or system, units, collection period, known caveats, and any questions you care about…"
-          rows="6"
-        ></textarea>
-        <div class="field-hint"><Info size={13} /> Metadata guides exploration but does not prescribe the conclusion.</div>
+      <div class="number">02</div>
+      <div>
+        <div class="section-heading"><span><h2>Context</h2><p>Describe table grain, units, population, caveats, and valid claim strength.</p></span><b class="optional">recommended</b></div>
+        <label>Discovery name <input bind:value={title} placeholder="NHANES 2021-2023 cardiometabolic signals" maxlength="100" /></label>
+        <label>Notes <textarea bind:value={metadata} rows="6" placeholder="What do these files measure? Which joins are valid? What must not be interpreted causally?"></textarea></label>
+        <button type="button" class="metadata-button" onclick={() => metadataInput.click()}>Attach dictionaries or metadata files</button>
+        <input class="hidden" bind:this={metadataInput} type="file" multiple accept=".txt,.md,.json,.csv" onchange={(event) => addMetadata(Array.from(event.currentTarget.files ?? []))} />
+        {#if metadataFiles.length}<p class="metadata-list">{metadataFiles.map((file) => file.name).join(" · ")}</p>{/if}
       </div>
     </section>
 
     <section class="form-section">
-      <div class="form-section-number">03</div>
-      <div class="form-section-body">
-        <div class="form-heading">
-          <div><h2>Discovery budget</h2><p>Choose how widely the MCTS engine should explore.</p></div>
-        </div>
-
-        <div class="budget-grid">
-          <label class:checked={budget === "fast"} class="budget-option">
-            <input type="radio" bind:group={budget} value="fast" />
-            <span class="budget-radio"><span></span></span>
-            <span class="budget-icon fast"><Zap size={18} strokeWidth={1.8} /></span>
-            <span class="budget-copy"><strong>Fast</strong><small>3 tested hypotheses</small></span>
-            <span class="budget-time">~8 min</span>
+      <div class="number">03</div>
+      <div>
+        <div class="section-heading"><span><h2>Search budget</h2><p>One step evaluates one hypothesis. Search and experiment run in parallel.</p></span></div>
+        <div class="budget">
+          <label>Hypotheses to evaluate
+            <input bind:value={steps} type="number" min="1" max="12" step="1" />
+            <small>1 to 12, evaluated in parallel batches.</small>
           </label>
-          <label class:checked={budget === "standard"} class="budget-option recommended">
-            <span class="recommended-tag">Recommended</span>
-            <input type="radio" bind:group={budget} value="standard" />
-            <span class="budget-radio"><span></span></span>
-            <span class="budget-icon standard"><FlaskConical size={18} strokeWidth={1.8} /></span>
-            <span class="budget-copy"><strong>Standard</strong><small>6 tested hypotheses</small></span>
-            <span class="budget-time">~20 min</span>
-          </label>
-          <label class:checked={budget === "deep"} class="budget-option">
-            <input type="radio" bind:group={budget} value="deep" />
-            <span class="budget-radio"><span></span></span>
-            <span class="budget-icon deep"><Files size={18} strokeWidth={1.8} /></span>
-            <span class="budget-copy"><strong>Deep</strong><small>12 tested hypotheses</small></span>
-            <span class="budget-time">~45 min</span>
+          <label>Seed
+            <input bind:value={seed} type="number" min="0" step="1" />
+            <small>Seeds selection and every model call.</small>
           </label>
         </div>
 
-        <div class="isolation-note">
-          <ShieldCheck size={18} strokeWidth={1.7} />
-          <div><strong>Isolated experiment execution</strong><span>Every hypothesis runs in a fresh, ephemeral sandbox with scoped access to this dataset.</span></div>
-        </div>
+        <button type="button" class="disclosure" onclick={() => (limits = !limits)}>
+          {limits ? "Hide" : "Set"} stage time limits
+        </button>
+        {#if limits}
+          <div class="minutes">
+            {#each STAGES as stage}
+              <label>{stage.label}
+                <input bind:value={minutes[stage.key]} type="number" min="1" max="60" step="1" placeholder="profile" />
+              </label>
+            {/each}
+          </div>
+          <p class="operator-note">
+            Minutes per stage, overriding the profile for this run only. Literature and experiment
+            run at the same time, so a step costs proposal + max(literature, experiment) + external.
+            Leave a field empty to keep the profile's value.
+          </p>
+        {/if}
+        <p class="operator-note">Runs use the operator configuration on this machine. You can close the page after launch.</p>
       </div>
     </section>
 
-    {#if launchError}<div class="launch-error" role="alert">{launchError}</div>{/if}
-    <div class="launch-bar">
-      <div>
-        <Sparkles size={17} />
-        <span><strong>Ready when you are.</strong> You can close this page after launch.</span>
-      </div>
-      <button class="primary-button launch-button" type="submit" disabled={!files.length || launching}>
-        {launching ? "Launching discovery…" : "Run autonomous discovery"} {#if !launching}<ArrowRight size={17} />{/if}
-      </button>
-    </div>
+    {#if error}<p class="launch-error" role="alert">{error}</p>{/if}
+    <footer>
+      <span>{data.length ? `${data.length} data file${data.length === 1 ? "" : "s"} ready` : "Choose data to continue"}</span>
+      <button class="submit" type="submit" disabled={!data.length || launching || bytes > 100 * 1024 * 1024}>{launching ? "Uploading and launching…" : "Launch discovery →"}</button>
+    </footer>
   </form>
 </section>
+
+<style>
+  .launch-page { max-width: 900px; margin: 0 auto; padding: 44px 36px 100px; }
+  header { margin-bottom: 38px; }
+  .back { border: 0; padding: 0; color: var(--dim); background: transparent; cursor: pointer; }
+  .eyebrow { margin: 34px 0 8px; color: var(--violet); font: 10px var(--mono); letter-spacing: .13em; }
+  h1 { margin: 0; font-size: 30px; font-weight: 520; letter-spacing: -.03em; }
+  .intro { max-width: 620px; margin: 10px 0 0; color: var(--dim); line-height: 1.65; }
+  form { border-top: 1px solid var(--line); }
+  .form-section { display: grid; grid-template-columns: 42px minmax(0,1fr); gap: 18px; padding: 30px 0; border-bottom: 1px solid var(--line); }
+  .number { color: var(--faint); font: 11px var(--mono); }
+  .section-heading { display: flex; justify-content: space-between; gap: 20px; margin-bottom: 18px; }
+  .section-heading h2 { margin: 0; font-size: 16px; font-weight: 520; }
+  .section-heading p { margin: 4px 0 0; color: var(--dim); font-size: 12px; }
+  .section-heading > b { align-self: start; color: var(--violet); font: 9px var(--mono); text-transform: uppercase; }
+  .section-heading > b.optional { color: var(--faint); }
+  .dropzone { width: 100%; min-height: 132px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; border: 1px dashed var(--edge); border-radius: 7px; color: var(--dim); background: var(--panel); cursor: pointer; }
+  .dropzone.dragging, .dropzone:hover { border-color: var(--violet); background: var(--accent-bg); }
+  .dropzone input, .hidden { display: none; }
+  .dropzone strong { color: var(--text); font-size: 13px; font-weight: 500; }
+  .dropzone small { color: var(--faint); }
+  .plus { color: var(--violet); font: 27px/1 var(--mono); }
+  .files { list-style: none; margin: 10px 0 0; padding: 0; border-top: 1px solid var(--line); }
+  .files li { min-height: 48px; display: flex; justify-content: space-between; align-items: center; padding: 7px 4px; border-bottom: 1px solid var(--line); }
+  .files b { display: block; font: 11px var(--mono); }
+  .files small { display: block; margin-top: 2px; color: var(--faint); font-size: 10px; }
+  .files button { border: 0; color: var(--faint); background: transparent; font-size: 18px; cursor: pointer; }
+  .total, .metadata-list { margin: 9px 0 0; color: var(--faint); font: 10px var(--mono); }
+  .total.error { color: var(--red); }
+  label { display: grid; gap: 6px; margin-top: 14px; color: var(--dim); font-size: 11px; }
+  input, textarea { width: 100%; border: 1px solid var(--line); border-radius: 5px; padding: 9px 10px; color: var(--text); background: var(--bg); font: inherit; outline: 0; }
+  input:focus, textarea:focus { border-color: var(--accent-line); }
+  textarea { resize: vertical; line-height: 1.55; }
+  .metadata-button { margin-top: 10px; border: 0; padding: 0; color: var(--violet); background: transparent; cursor: pointer; font: 11px var(--mono); }
+  .budget { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+  .budget input, .minutes input { font-family: var(--mono); }
+  .budget small, .minutes small { color: var(--faint); font-size: 10px; }
+  .disclosure { margin-top: 16px; border: 0; padding: 0; color: var(--violet); background: transparent; cursor: pointer; font: 11px var(--mono); }
+  .minutes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+  .operator-note { margin: 16px 0 0; color: var(--faint); font-size: 11px; }
+  .launch-error { padding: 10px 12px; border: 1px solid var(--danger-line); border-radius: 5px; color: var(--danger-text); background: var(--danger-bg); }
+  footer { min-height: 76px; display: flex; justify-content: space-between; align-items: center; gap: 20px; }
+  footer span { color: var(--dim); font-size: 11px; }
+  .submit { min-width: 220px; height: 40px; border: 1px solid var(--accent-edge); border-radius: 5px; color: var(--accent-text); background: var(--accent-fill); cursor: pointer; }
+  .submit:disabled { opacity: .4; cursor: default; }
+  @media (max-width: 620px) { .launch-page { padding: 28px 20px 80px; } .form-section { grid-template-columns: 1fr; } .number { display: none; } .budget, .minutes { grid-template-columns: 1fr; } footer { align-items: stretch; flex-direction: column; padding-top: 18px; } .submit { width: 100%; } }
+</style>

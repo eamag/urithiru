@@ -1,174 +1,141 @@
 <script lang="ts">
-  import {
-    Activity,
-    ArrowLeft,
-    Beaker,
-    Check,
-    ChevronRight,
-    CircleSlash2,
-    Clipboard,
-    Clock3,
-    Cloud,
-    Code2,
-    Database,
-    Download,
-    ExternalLink,
-    FileArchive,
-    GitBranch,
-    ListTree,
-    MoreHorizontal,
-    Pause,
-    SearchCheck,
-    Sparkles,
-  } from "lucide-svelte";
-  import type { DiscoveryRun, TreeNode } from "../lib/types";
+  import { activeStages, ranked, runName, running, shortName } from "../lib/run";
+  import type { CheckpointNode, Run } from "../lib/types";
   import NodeInspector from "./NodeInspector.svelte";
-  import StatusPill from "./StatusPill.svelte";
-  import TreeView from "./TreeView.svelte";
+  import Tree from "./Tree.svelte";
 
-  export let run: DiscoveryRun;
-  export let onback: () => void;
+  let { run, onback, oncancel }: { run: Run; onback: () => void; oncancel: () => Promise<void> } = $props();
 
-  let tab: "tree" | "findings" | "activity" = "tree";
-  let selectedNodeId = run.nodes.find((node) => node.status === "running")?.id ?? run.nodes[1]?.id ?? "root";
-  let copied = false;
+  const LOG_LINES = 120;
 
-  $: if (!run.nodes.some((node) => node.id === selectedNodeId)) selectedNodeId = run.nodes[0]?.id ?? "root";
-  $: selectedNode = run.nodes.find((node) => node.id === selectedNodeId) ?? run.nodes[0];
-  $: findings = run.nodes.filter((node) => ["supported", "refuted", "inconclusive"].includes(node.status));
+  let picked = $state<string | null>(null);
+  let cancelling = $state(false);
+  let error = $state("");
 
-  async function copyId() {
-    await navigator.clipboard?.writeText(run.id);
-    copied = true;
-    setTimeout(() => copied = false, 1600);
-  }
+  let checkpoint = $derived(run.checkpoint);
+  let nodes = $derived(checkpoint?.nodes ?? []);
+  let order = $derived(ranked(checkpoint));
+  // Until something is picked, show the strongest finding, else the root.
+  let selected = $derived<CheckpointNode | null>(
+    nodes.find((node) => node.id === picked) ?? order[0] ?? nodes[0] ?? null,
+  );
+  let rank = $derived(selected ? order.findIndex((node) => node.id === selected.id) + 1 : 0);
+  let live = $derived(activeStages(run.events));
+  let log = $derived(run.events.slice(-LOG_LINES).reverse());
+  let alive = $derived(running(run.entry.status));
 
-  function exportRun() {
-    const blob = new Blob([JSON.stringify(run, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${run.id}-evidence.json`;
-    anchor.click();
-    URL.revokeObjectURL(url);
-  }
-
-  function verdictIcon(node: TreeNode) {
-    return node.status === "supported" ? Check : CircleSlash2;
+  async function stop() {
+    cancelling = true;
+    error = "";
+    try {
+      await oncancel();
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      cancelling = false;
+    }
   }
 </script>
 
-<section class="run-page">
-  <header class="run-header">
-    <div class="run-header-main">
-      <button type="button" class="back-icon-button" aria-label="Back to overview" onclick={onback}><ArrowLeft size={17} /></button>
-      <div class="run-dataset-mark"><Database size={19} strokeWidth={1.7} /></div>
-      <div class="run-heading-copy">
-        <div class="run-id-row">
-          <span>{run.id}</span>
-          <button type="button" aria-label="Copy run ID" title="Copy run ID" onclick={copyId}>{#if copied}<Check size={12} />{:else}<Clipboard size={12} />{/if}</button>
-          <StatusPill status={run.status} compact />
-        </div>
-        <h1>{run.name}</h1>
-        <p>{run.datasetName} <span>·</span> {run.datasetSize} <span>·</span> {run.rows} rows <span>·</span> {run.columns || "—"} variables</p>
+<section class="workspace">
+  <header>
+    <button type="button" class="back" onclick={onback}>← All runs</button>
+    <div class="title">
+      <div>
+        <h1>{runName(run.entry)}</h1>
+        <p class="dataset">{run.entry.dataset.map(shortName).join(" · ")}</p>
       </div>
+      {#if alive}
+        <button type="button" class="cancel" disabled={cancelling} onclick={() => void stop()}>
+          {cancelling ? "Cancelling…" : "Cancel run"}
+        </button>
+      {/if}
     </div>
-    <div class="run-header-actions">
-      {#if run.status === "running"}<button type="button" class="secondary-button"><Pause size={15} /> Pause</button>{/if}
-      <button type="button" class="secondary-button" onclick={exportRun}><Download size={15} /> Export</button>
-      <button type="button" class="icon-button" aria-label="More actions"><MoreHorizontal size={17} /></button>
-    </div>
+
+    <p class="facts">
+      <span class="status" class:live={alive}>{run.entry.status}</span>
+      · {run.entry.completed ?? 0} of {run.entry.requested ?? 0} hypotheses
+      {#if run.config}· seed {run.config.seed} · {run.config.models.agent}{/if}
+      · <code>{run.entry.id.slice(0, 8)}</code>
+    </p>
+
+    {#if live.length}
+      <p class="stages">
+        {#each live as stage}<span>{stage}</span>{/each}
+        {live.length > 1 ? "running in parallel, in separate workspaces" : "running"}
+      </p>
+    {/if}
+    {#if run.entry.error}<p class="error">{run.entry.error}</p>{/if}
+    {#if error}<p class="error">{error}</p>{/if}
   </header>
 
-  {#if run.status === "running"}
-    <div class="live-run-strip">
-      <div class="live-orb"><span></span></div>
-      <div class="live-run-copy"><strong>{run.currentAction}</strong><span>{run.stage} · {run.completeNodes} of {run.totalNodes} complete</span></div>
-      <div class="live-run-progress"><div><span style={`width:${run.progress}%`}></span></div><strong>{run.progress}%</strong></div>
-      <div class="cloud-worker-label"><Cloud size={14} /> {run.region}</div>
-    </div>
-  {/if}
-
-  <div class="run-summary-bar">
-    <div><span class="summary-icon violet"><Sparkles size={15} /></span><small>Candidates</small><strong>{run.candidates}</strong></div>
-    <div><span class="summary-icon slate"><SearchCheck size={15} /></span><small>Duplicates removed</small><strong>{run.duplicates}</strong></div>
-    <div><span class="summary-icon blue"><Beaker size={15} /></span><small>Evaluated</small><strong>{run.completeNodes}</strong></div>
-    <div><span class="summary-icon green"><Check size={15} /></span><small>Supported</small><strong>{run.verified}</strong></div>
-    <div><span class="summary-icon amber"><ExternalLink size={15} /></span><small>Budget</small><strong class="capitalize">{run.budget}</strong></div>
-  </div>
-
-  <div class="run-tabs">
-    <button type="button" class:active={tab === "tree"} onclick={() => tab = "tree"}><ListTree size={15} /> Search tree <span>{run.nodes.length - 1}</span></button>
-    <button type="button" class:active={tab === "findings"} onclick={() => tab = "findings"}><FileArchive size={15} /> Findings <span>{findings.length}</span></button>
-    <button type="button" class:active={tab === "activity"} onclick={() => tab = "activity"}><Activity size={15} /> Activity <span>{run.events.length}</span></button>
-  </div>
-
-  {#if tab === "tree"}
-    <div class="tree-workspace">
-      <div class="tree-panel">
-        <div class="panel-heading">
-          <div><span class="panel-kicker">MONTE CARLO TREE SEARCH</span><h2>Hypothesis search tree</h2></div>
-          <div class="uct-note"><GitBranch size={13} /> node size fixed · color shows outcome</div>
-        </div>
-        <div class="tree-component-wrap">
-          <TreeView nodes={run.nodes} selectedId={selectedNodeId} onselect={(id) => selectedNodeId = id} />
-        </div>
+  {#if checkpoint}
+    <section class="panel tree-panel">
+      <h2>search tree <span>{nodes.length} nodes · {order.length} evaluated</span></h2>
+      <div class="scroller">
+        <Tree {checkpoint} selectedId={selected?.id ?? ""} onselect={(id) => (picked = id)} />
       </div>
-      {#if selectedNode}<NodeInspector node={selectedNode} />{/if}
-    </div>
-  {:else if tab === "findings"}
-    <div class="content-tab-view findings-view">
-      <div class="content-view-heading">
-        <div><span class="panel-kicker">RANKED BY INFORMATION VALUE</span><h2>{findings.length} evaluated hypotheses</h2><p>Results include negative and contradictory evidence.</p></div>
-        <button type="button" class="secondary-button" onclick={exportRun}><Download size={15} /> Download evidence</button>
-      </div>
-      <div class="findings-list">
-        {#each findings.sort((a, b) => (b.reward ?? 0) - (a.reward ?? 0)) as node, index}
-          {@const VerdictIcon = verdictIcon(node)}
-          <button type="button" class="finding-card" onclick={() => { selectedNodeId = node.id; tab = "tree"; }}>
-            <span class="finding-rank">{String(index + 1).padStart(2, "0")}</span>
-            <div class="finding-main">
-              <div class="finding-tags"><span class="node-state {node.status}"><VerdictIcon size={12} /> {node.status}</span>{#if node.verdict}<span class="finding-verdict">External: {node.verdict}</span>{/if}</div>
-              <h3>{node.claim}</h3>
-              <p>{node.summary}</p>
-              <div class="finding-beliefs">
-                <span>Literature <strong>{node.belief ? Math.round(node.belief.literature * 100) : "—"}%</strong></span>
-                <span>Seed data <strong>{node.belief?.seed !== undefined ? Math.round(node.belief.seed * 100) : "—"}%</strong></span>
-                <span>Reward <strong>{node.reward?.toFixed(2) ?? "—"}</strong></span>
-              </div>
-            </div>
-            <ChevronRight class="finding-arrow" size={18} />
-          </button>
-        {/each}
-      </div>
-    </div>
+    </section>
+
+    <section class="panel">
+      <h2>node <span>{selected ? selected.id : "none"}</span></h2>
+      {#if selected}
+        <NodeInspector node={selected} {rank} pending={checkpoint.pending.includes(selected.id)} />
+      {:else}
+        <p class="none">The tree is empty until the first proposal round returns.</p>
+      {/if}
+    </section>
   {:else}
-    <div class="content-tab-view activity-view">
-      <div class="content-view-heading">
-        <div><span class="panel-kicker">STRUCTURED RUN EVENTS</span><h2>Activity log</h2><p>Progress emitted by the orchestrator and verification workers.</p></div>
-        <span class="cloud-log-chip"><Code2 size={13} /> Cloud Logging</span>
-      </div>
-      <div class="activity-layout">
-        <div class="activity-timeline">
-          {#each run.events as event}
-            <article class="timeline-event {event.status}">
-              <span class="timeline-dot">{#if event.status === "complete"}<Check size={11} />{:else if event.status === "warning"}<span>!</span>{:else if event.status === "active"}<span class="tiny-spinner"></span>{:else}<Clock3 size={11} />{/if}</span>
-              <div><strong>{event.title}</strong><p>{event.detail}</p></div>
-              <time>{event.time}</time>
-            </article>
-          {/each}
-        </div>
-        <aside class="run-context-card">
-          <span class="panel-kicker">RUN CONTEXT</span>
-          <dl>
-            <div><dt>Run ID</dt><dd>{run.id}</dd></div>
-            <div><dt>Region</dt><dd>{run.region}</dd></div>
-            <div><dt>Budget</dt><dd class="capitalize">{run.budget}</dd></div>
-            <div><dt>Started</dt><dd>{run.startedAt}</dd></div>
-            <div><dt>Dataset</dt><dd>{run.datasetName}</dd></div>
-          </dl>
-        </aside>
-      </div>
-    </div>
+    <p class="none">Waiting for the first checkpoint.</p>
   {/if}
+
+  <section class="panel">
+    <h2>event log <span>{run.events.length} events</span></h2>
+    <ol class="log">
+      {#each log as event}
+        <li class={event.severity.toLowerCase()}>
+          <time>{event.time.slice(11, 19)}</time>
+          <span>{event.message}</span>
+        </li>
+      {:else}
+        <li class="info"><span>No events yet.</span></li>
+      {/each}
+    </ol>
+  </section>
 </section>
+
+<style>
+  .workspace { max-width: 1280px; margin: 0 auto; padding: 34px 42px 100px; }
+  .back { margin-bottom: 20px; border: 0; padding: 0; color: var(--faint); background: transparent; cursor: pointer; font: 11px var(--mono); }
+  .back:hover { color: var(--dim); }
+  .title { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
+  h1 { margin: 0; font-size: 25px; font-weight: 520; letter-spacing: -.02em; line-height: 1.3; }
+  .dataset { margin: 7px 0 0; color: var(--dim); font-size: 12px; }
+  .cancel { flex: none; height: 32px; padding: 0 13px; border: 1px solid var(--danger-line); border-radius: 5px; color: var(--danger-text); background: transparent; cursor: pointer; font-size: 12px; }
+  .cancel:disabled { opacity: .5; cursor: default; }
+  .facts { margin: 14px 0 0; color: var(--dim); font-size: 12px; }
+  .facts .status { color: var(--text); }
+  .facts .status.live { color: var(--violet); }
+  .stages { margin: 10px 0 0; color: var(--faint); font-size: 12px; }
+  .stages span { margin-right: 6px; padding: 1px 6px; border: 1px solid var(--line); border-radius: 3px; color: var(--violet); font: 400 11px var(--mono); }
+  .error { margin: 12px 0 0; color: var(--red); font-size: 12px; }
+  .panel { min-width: 0; margin-top: 16px; padding: 18px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); }
+  .panel:first-of-type { margin-top: 34px; }
+  /* The tree lays out on a fixed grid, so it scrolls inside the panel rather than
+     reflowing; the page itself never scrolls sideways. */
+  .scroller { overflow: auto; max-height: 62vh; padding-bottom: 4px; }
+  h2 { margin: 0 0 14px; padding: 0 10px; color: var(--faint); font-size: 11px; font-weight: 500; letter-spacing: .11em; text-transform: uppercase; }
+  h2 span { margin-left: 8px; color: var(--faint); font: 10px var(--mono); letter-spacing: 0; text-transform: none; }
+  .none { margin: 0; padding: 0 10px; color: var(--dim); font-size: 12.5px; }
+  .log { list-style: none; margin: 0; padding: 0 10px; max-height: 320px; overflow: auto; font: 400 11.5px/1.9 var(--mono); }
+  .log li { display: flex; gap: 14px; color: var(--dim); }
+  .log span { min-width: 0; overflow-wrap: anywhere; }
+  .log li.warning span { color: var(--violet); }
+  .log li.error span { color: var(--red); }
+  time { flex: none; color: var(--faint); }
+  code { padding: 2px 6px; border: 1px solid var(--line); border-radius: 3px; background: var(--bg); font: 400 11.5px var(--mono); }
+  @media (max-width: 1000px) {
+    .workspace { padding: 26px 20px 80px; }
+    .scroller { max-height: 44vh; }
+  }
+</style>

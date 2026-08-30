@@ -20,10 +20,12 @@ domain inputs, not repeated configuration bundles.
 
 - The package installs independently, without importing the research checkout.
 - CSV/TSV/Parquet/XLSX/XLS and optional text metadata replace benchmark-specific loaders.
-- The literature and empirical beliefs come from **two agents in two containers, started
+- The literature and empirical beliefs come from **two agents in separate workspaces, started
   together**. The literature agent is never given the data, so data-blindness is
   structural rather than prompt-enforced and audited afterwards from file timestamps.
-- Both runtimes launch the same agent CLI; Cloud Run isolates it with a Cloud Run sandbox.
+- Both runtimes launch the same agent CLI. Docker provides a container per goal; Cloud
+  Run always provides a private workspace and `HOME`, and uses its Preview sandbox only
+  when that launcher and an ADC credential path are available.
 - Every record validates itself on construction, so an unparseable agent result fails at
   the boundary and the stage retries.
 - Checkpoints are ordinary JSON, atomically replaced; the event stream is `events.jsonl`
@@ -42,7 +44,7 @@ are not ported. See [architecture.md](architecture.md), [local.md](local.md),
   checkpointed to the bucket. Mirroring it into a database would create two copies to
   keep in agreement across a resume, for no capability the bucket lacks.
 - **An additional agent framework.** The Google GenAI SDK does the prior, merge and
-  embedding calls, and the agent CLI runs in the sandboxes. Wrapping working components
+  embedding calls, and the agent CLI runs in the runtime workspaces. Wrapping working components
   in a second orchestration layer adds a layer, not a behaviour.
 - **Belief diagnostics nothing reads.** Six numbers survive because each answers a
   question no other answers; see [architecture.md](architecture.md). Variants that were
@@ -52,9 +54,9 @@ are not ported. See [architecture.md](architecture.md), [local.md](local.md),
 ## Verification boundary
 
 Deterministic behaviour is verified offline against stubs and saved artifacts:
-[offline-verification.md](offline-verification.md). Docker and Google end-to-end
-execution remain unverified until their prerequisites and separately authorized
-execution are available.
+[offline-verification.md](offline-verification.md). The Google container fallback was
+also exercised end to end; local Docker and Preview gVisor remain separate verification
+boundaries.
 
-No cloud resources are provisioned, no public service is exposed, and no license or
-publication decision is made by this implementation.
+No public service is exposed, and no license or publication decision is made by this
+implementation.

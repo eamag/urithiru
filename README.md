@@ -11,12 +11,12 @@ statistical confidence**.
 
 ## How it works
 
-A run is a Monte Carlo tree search over hypotheses. Each **step** spends four agent
-containers on one claim:
+A run is a Monte Carlo tree search over hypotheses. Each **step** can use four agent
+stages on one claim:
 
 1. **Proposal** — an agent explores your files and proposes candidate claims.
    Duplicates are removed and the most novel candidate is selected.
-2. **Search** and **Code**, at the same time, in two separate containers. The search
+2. **Search** and **Code**, at the same time, in separate workspaces and private homes. The search
    agent judges the claim from published literature; its workspace never receives your
    data. The code agent writes and runs an analysis against your data; it is never told
    what the literature concluded.
@@ -28,7 +28,7 @@ many hypotheses you want evaluated.
 
 The distance between the search and code beliefs is the whole point, so the two are
 produced by agents that cannot see each other's work. Data-blindness is not a rule the
-literature agent is asked to follow — the files are simply absent from its container.
+literature agent is asked to follow — the files are simply absent from its workspace.
 
 Full detail: [docs/design.md](docs/design.md), [docs/architecture.md](docs/architecture.md).
 
@@ -46,13 +46,14 @@ uv run urithiru --help
 
 The cloud runtime uses the **Antigravity CLI** for the agents, the **Google GenAI
 SDK** for priors, deduplication and embeddings, one **Cloud Run Job** for the search
-loop, a **Cloud Run sandbox** per agent to isolate generated code, and **Cloud
-Storage** for inputs, checkpoints and artifacts. There is no second state store: the
-checkpoint and the event log in the bucket are what a run is.
+loop, a private workspace and `HOME` per goal, and **Cloud Storage** for inputs,
+checkpoints and artifacts. Preview gVisor isolation can be enabled when available;
+otherwise the run logs its container-isolation fallback. There is no second state
+store: the checkpoint and event log in the bucket are what a run is.
 
 1. Copy `configs/google.toml` and replace `project` and `bucket` with your own.
    Placeholder values are rejected at load time.
-2. Provision the project and deploy both jobs: [docs/google.md](docs/google.md).
+2. Provision the project and deploy the job: [docs/google.md](docs/google.md).
 3. Start a run. It returns immediately with a run reference and an execution name:
 
 ```sh
@@ -65,6 +66,18 @@ uv run urithiru run --config configs/google.toml \
 uv run urithiru status gs://your-bucket/urithiru/<run-id>
 uv run urithiru cancel gs://your-bucket/urithiru/<run-id>
 uv run urithiru export gs://your-bucket/urithiru/<run-id> --output ./export
+```
+
+## Watch it
+
+`web/` is a static page that renders a run: the search tree, the four beliefs behind
+each hypothesis, and the event log. It has no server and no credentials —
+`urithiru publish` copies the run's checkpoint and event log next to it, and `--watch`
+keeps copying until the run finishes.
+
+```sh
+uv run urithiru publish gs://your-bucket/urithiru/<run-id> --watch
+cd web && bun install && bun run dev
 ```
 
 ## Run locally
@@ -134,9 +147,11 @@ have reviewed it.
 
 ```text
 urithiru run      --data FILE...        start a run
-urithiru status   RUN                   progress and last update
+urithiru status   RUN                   progress, last update, and whether it is alive
+urithiru logs     RUN [--follow]        the run's event log, in order
 urithiru resume   RUN                   continue from the checkpoint
 urithiru cancel   RUN                   stop, preserving completed work
+urithiru publish  RUN [--watch]         copy the run where the web page can read it
 urithiru export   RUN --output DIR      copy the run and write the ranked report
 ```
 
@@ -160,4 +175,3 @@ The scientific engine — the MCTS search, belief analysis and prompt contracts 
 **pre-exists this application work** and is ported here, as recorded in
 [docs/provenance.md](docs/provenance.md). The standalone package, both runtimes,
 the CLI and the cloud deployment are the new work.
-

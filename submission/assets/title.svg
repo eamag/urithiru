@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">Urithiru</title>
+  <desc id="desc">Autonomous aviation safety signals, tested across borders.</desc>
+  <rect width="1600" height="900" fill="#0b0c0b"/>
+  <circle cx="800" cy="312" r="6" fill="#9c7bd8"/>
+  <path d="M 800 318 V 386 M 800 386 L 674 494 M 800 386 L 926 494 M 674 494 L 800 602 M 926 494 L 800 602" fill="none" stroke="#555b55" stroke-width="2"/>
+  <circle cx="674" cy="494" r="6" fill="#9c7bd8"/>
+  <circle cx="926" cy="494" r="6" fill="#66bd91"/>
+  <circle cx="800" cy="602" r="6" fill="#d6d9d5"/>
+  <text x="800" y="710" text-anchor="middle" fill="#e6e8e5" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="76" font-weight="600" letter-spacing="12">URITHIRU</text>
+  <text x="800" y="764" text-anchor="middle" fill="#9da39d" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="25">autonomous aviation safety signals, tested across borders</text>
+</svg>

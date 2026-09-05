@@ -1,0 +1,13 @@
+.venv/
+dist/
+.ruff_cache/
+__pycache__/
+*.pyc
+.env
+runs/
+.work/
+.opencode/
+# Local datasets and working files; never committed.
+data/
+
+configs/*.local.toml

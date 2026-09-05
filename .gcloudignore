@@ -1,0 +1,14 @@
+# Cloud Build only needs what the worker image copies
+
+*
+
+!Dockerfile
+!pyproject.toml
+!uv.lock
+!README.md
+!src/
+!src/**
+!deploy/
+!deploy/analysis-requirements.txt
+**/**pycache**/**
+**/*.pyc

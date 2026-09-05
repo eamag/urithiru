@@ -1,0 +1,22 @@
+apiVersion: run.googleapis.com/v1
+kind: Job
+metadata:
+  name: urithiru
+spec:
+  template:
+    spec:
+      taskCount: 1
+      parallelism: 1
+      template:
+        spec:
+          serviceAccountName: ${SERVICE_ACCOUNT}
+          maxRetries: 0
+          timeoutSeconds: 86400
+          containers:
+            - image: ${IMAGE_URI}
+              args: ["orchestrate", "--run", "OVERRIDDEN-AT-SUBMIT"]
+              resources:
+                limits:
+                  cpu: "8"
+                  memory: 16Gi
+

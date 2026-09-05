@@ -1,0 +1,32 @@
+runtime = "docker"
+
+[budget]
+proposal_minutes = 5
+search_minutes = 8
+code_minutes = 10
+external_minutes = 10
+grace_minutes = 4
+max_output_tokens = 16384
+input_mib = 100
+stage_attempts = 3
+
+[search]
+parallelism = 2
+branching_factor = 5
+top_k = 25
+uct_c = 1.414
+external_minimum_surprise = 0.3
+external_opportunity_weight = 0.3
+external_cost_weight = 0.5
+
+[models]
+agent = "gemini-3.7-flash"
+prior = "gemini-3.7-flash"
+deduplication = "gemini-3.5-flash-lite"
+embedding = "text-embedding-005"
+temperature = 0.7
+effort = "high"
+
+[options]
+image = "urithiru-sandbox:latest"
+credential_volume = "agy_credentials"

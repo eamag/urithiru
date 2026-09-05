@@ -1,0 +1,38 @@
+---
+import Landing from "../components/Landing.svelte";
+import "../styles/global.css";
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta
+      name="description"
+      content="Agentic AI exploration grounded in your datasets. Bayesian surprise in a Monte Carlo search tree proposes hypotheses, writes and runs experiments, and seeks external evidence for surprising results."
+    />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#fbfbfa" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b0c0b" />
+    <meta property="og:title" content="Urithiru — agentic AI autoresearch" />
+    <meta
+      property="og:description"
+      content="It proposes the hypothesis, writes and runs the experiment, then seeks a compatible external dataset that could challenge the result."
+    />
+    <title>Urithiru — agentic AI autoresearch</title>
+    <!-- Prerendered pages cannot redirect on a query string, so links of the
+         form /?run=ID that used to be answered by the server are forwarded here
+         before the landing page paints. -->
+    <script is:inline>
+      {
+        const search = new URLSearchParams(location.search);
+        if (search.has("run") || search.has("view")) {
+          location.replace(`/workspace${location.search}`);
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <Landing client:load />
+  </body>
+</html>

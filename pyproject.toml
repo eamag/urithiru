@@ -1,0 +1,78 @@
+[project]
+name = "urithiru"
+version = "0.1.0"
+description = "Autonomous scientific discovery with auditable experiments"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "eamag" }]
+dependencies = [
+  "google-genai>=2.22,<3",
+  "google-cloud-run>=0.16.1,<1",
+  "google-cloud-storage>=3.13.1,<4",
+  "google-auth>=2.57.1,<3",
+  "httpx>=0.28.1,<1",
+  "numpy>=2.5.2,<3",
+  "scipy>=1.18.1,<2",
+  "pandas>=3.0.5,<4",
+  "pyarrow>=25.0.1,<26",
+  "openpyxl>=3.1.5,<4",
+  "xlrd>=2.0.2,<3",
+  "statsmodels>=0.15,<1",
+  "beautifulsoup4>=4.15,<5",
+  "pypdf>=6.17,<7",
+  "typer>=0.27.2,<1",
+]
+
+[project.urls]
+Homepage = "https://github.com/eamag/urithiru"
+Source = "https://github.com/eamag/urithiru"
+
+[project.scripts]
+urithiru = "urithiru.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.32"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/urithiru"]
+
+[tool.hatch.build.targets.sdist]
+only-include = [
+  "src",
+  "configs",
+  "deploy",
+  "docs",
+  "README.md",
+  "LICENSE",
+  "Dockerfile",
+  "uv.lock",
+  "pyproject.toml",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=9.1.1",
+  "ruff>=0.16.6",
+  "pyright>=1.1.411",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+include = ["src"]
+venvPath = "."
+venv = ".venv"

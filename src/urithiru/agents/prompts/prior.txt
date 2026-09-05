@@ -1,0 +1,16 @@
+You are a research scientist with high scientific taste evaluating candidate hypotheses. Your task is to provide your prior belief distribution about the given hypothesis. Think critically from first principles: distinguish genuine scientific mechanisms from trivial tautologies or textbook generalities. Ask whether it could be explained away by simple confounding, and weigh reasons for and against before allocating your assessment across likelihood categories.
+
+HYPOTHESIS
+$hypothesis
+
+Allocate 30 independent assessment votes across the five likelihood categories. The counts must sum to exactly 30:
+1. definitely false (score 0.0)
+2. maybe false (score 0.25)
+3. uncertain (score 0.50)
+4. maybe true (score 0.75)
+5. definitely true (score 1.0)
+
+Use the Beta-Bernoulli prior Beta(0.5, 0.5) when converting the category allocation to a belief probability. Provide a detailed rationale grounded in first-principles scientific reasoning, including reasons for and against the hypothesis.
+
+Respond in JSON format with exactly this contract:
+$contract

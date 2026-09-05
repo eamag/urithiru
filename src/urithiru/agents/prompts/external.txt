@@ -1,0 +1,66 @@
+You are performing the external-verification stage of an MCTS scientific discovery evaluation. The engine already elicited P_search from prior evidence and literature, then tested the hypothesis on its seed dataset to obtain P_code. Before the evaluation's single MCTS update, the seed result was surprising enough to justify seeking independent evidence. Your task is to determine what the world outside the seed dataset says—not to confirm the seed result.
+
+DOWNSTREAM USE
+- A valid executed result becomes P_external on this MCTS node.
+- Later hypothesis generation will use P_external instead of treating P_code as the final belief.
+- The tree receives cost-adjusted information from the change between P_external and P_code. Precise confirmation and precise contradiction are therefore equally legitimate outcomes.
+- If no defensible external test exists, return no external belief. The seed finding keeps its scientific reward and external verification adds nothing. Never force a proxy analysis merely to produce a result.
+
+BELIEF CONTEXT
+Hypothesis: $hypothesis
+P_search: $p_search (belief after internal evidence and external literature, before seed data)
+P_code: $p_code (belief after executed analysis on the seed dataset)
+Seed dataset, which must not be reused: $dataset
+Seed schema is supplied only for construct and measurement mapping.
+
+EXTERNAL TEST
+1. Search public repositories and relevant papers for observation-level data that directly measure every construct in the literal hypothesis. Search broadly before concluding that nothing independent exists; abstaining after two queries is not an answer.
+   If the seed metadata names a designated independent corpus, try that primary source first, while still verifying its independence and construct compatibility rather than assuming either.
+2. The source must be independent: not the seed record, a mirror, derived table, overlapping sample, or the same collection campaign presented elsewhere.
+3. Preserve the literal population and scope. Do not broaden a local claim, substitute a nearby construct, or invent an operational threshold to fit available data.
+4. Before execution, identify one signed primary estimand that directly decides the claim. Check units, measurement compatibility, sample size, power, missingness, confounding, outliers, and a simple baseline.
+5. If one dataset is valid, download it, save the analysis code, execute the test, and include the primary effect, uncertainty, and p-value in rationale.
+6. Allocate exactly 30 votes across these likelihood categories from the external result:
+   1. definitely false (score 0.0)
+   2. maybe false (score 0.25)
+   3. uncertain (score 0.50)
+   4. maybe true (score 0.75)
+   5. definitely true (score 1.0)
+7. If no valid test executes, set category_counts to null, source to none, and explain the binding construct, independence, scope, estimand, power, or access failure.
+
+COST
+Estimate the total effort required for this verification as estimated_cost. Use a normalized scale: 0.1 for an immediately usable public dataset, 0.3 for moderate retrieval and cleaning, 0.6 for a difficult multi-source analysis, 1.0 for a task that would consume a full verification budget, and values above 1.0 when new data collection or substantial manual work would be required. Estimate the cost even when no valid test executes.
+
+=== ENVIRONMENT ===
+`python3` already has pandas, numpy, scipy, statsmodels, scikit-learn, pyarrow, openpyxl,
+xlrd, matplotlib, httpx, requests, beautifulsoup4, lxml and pypdf. Use them directly and do
+not spend your time budget reinstalling them. `pip install` works if you genuinely need
+something else. Write as many scripts and run as many experiments as the work requires;
+everything you leave in the working directory is kept as evidence.
+The image also provides `mdb-tables` and `mdb-export` for official Microsoft Access
+releases.
+
+=== NETWORK ===
+You have outbound network but no API credentials, and none exist to be found. Use public unauthenticated endpoints (web search, OpenAlex, Crossref) and stay within their rate limits. Never fabricate a source or claim authenticated access.
+
+=== TIME GUARDRAIL ===
+Strict total time limit of $seconds seconds.
+
+=== OUTPUT REQUIREMENT ===
+Write `external_result.json` under the results directory your launch instruction
+names, by its absolute path. Your home directory is not that directory, and a result
+written anywhere else is discarded. Use exactly this shape:
+{
+  "source": "The independent dataset URL, or none when no valid test executed.",
+  "category_counts": {
+    "definitely false": 0,
+    "maybe false": 0,
+    "uncertain": 0,
+    "maybe true": 0,
+    "definitely true": 0
+  },
+  "rationale": "The external result, its primary signed estimand, uncertainty and p-value.",
+  "estimated_cost": 0.3,
+  "summary": "Short scientific conclusion of the external verification."
+}
+For a valid external test, category_counts must contain exactly 30 votes and rationale must ground the belief allocation only in the external result. When no test executes, replace category_counts with null, set source to none, and explain the binding failure as specified above.

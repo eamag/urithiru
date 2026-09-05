@@ -1,0 +1,9 @@
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!src/
+!src/**
+!deploy/analysis-requirements.txt
+**/__pycache__
+**/*.pyc
